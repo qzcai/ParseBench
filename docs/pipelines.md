@@ -142,6 +142,17 @@ uv run parse-bench run upstage_dpe_v2 --test --max_concurrent 2
 | **`azure_di_layout`** | Layout model (In paper: *Azure Document Intelligence*) | `AZURE_DOCUMENT_INTELLIGENCE_KEY`, `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` |
 | `azure_di_read` | Read model | `AZURE_DOCUMENT_INTELLIGENCE_KEY`, `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT` |
 
+### Azure Content Understanding
+
+Successor to Azure Document Intelligence. Uses the official
+`azure-ai-contentunderstanding` Python SDK (GA `2025-11-01`) — submitting raw
+document bytes via `begin_analyze_binary` — and returns markdown (with HTML
+tables), reading order, and layout/figure bounding boxes.
+
+| Pipeline | Description | Env Vars |
+|---|---|---|
+| **`azure_cu_layout`** | `prebuilt-layout` analyzer — markdown, tables, reading order, layout grounding. No LLM deployment required (clean baseline, analogous to `azure_di_layout`). | `AZURE_CONTENT_UNDERSTANDING_KEY`, `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` |
+
 ### AWS Textract
 
 | Pipeline | Description | Env Vars |

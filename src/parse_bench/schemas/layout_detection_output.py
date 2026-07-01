@@ -301,6 +301,7 @@ class LayoutDetectionModel(StrEnum):
     LANDINGAI_LAYOUT = "landingai_layout"
     EXTEND_LAYOUT = "extend_layout"
     AZURE_DI_LAYOUT = "azure_di_layout"
+    AZURE_CU_LAYOUT = "azure_content_understanding_layout"
     GOOGLE_DOCAI_LAYOUT = "google_docai_layout"
     UNSTRUCTURED_LAYOUT = "unstructured_layout"
     DEEPSEEK_OCR2_LAYOUT = "deepseek_ocr2_layout"
@@ -429,6 +430,10 @@ LAYOUT_MODEL_INFO: dict[LayoutDetectionModel, dict[str, str]] = {
     LayoutDetectionModel.AZURE_DI_LAYOUT: {
         "name": "Azure Document Intelligence Layout",
         "hf_url": "https://azure.microsoft.com/en-us/products/ai-services/ai-document-intelligence",
+    },
+    LayoutDetectionModel.AZURE_CU_LAYOUT: {
+        "name": "Azure Content Understanding Layout",
+        "hf_url": "https://azure.microsoft.com/en-us/products/ai-services/ai-content-understanding",
     },
     LayoutDetectionModel.GOOGLE_DOCAI_LAYOUT: {
         "name": "Google Document AI Layout",
