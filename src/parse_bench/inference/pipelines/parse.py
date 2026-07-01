@@ -427,6 +427,26 @@ def register_parse_pipelines(register_fn) -> None:  # type: ignore[no-untyped-de
         )
     )
 
+    # ===========================
+    # Azure Content Understanding
+    # ===========================
+
+    # Azure Content Understanding (successor to Document Intelligence) using the
+    # prebuilt-layout analyzer: markdown with HTML tables, reading order, and
+    # layout/figure bounding boxes. Works out of the box (no LLM dependency, no
+    # model deployment) — the clean baseline analogous to azure_di_layout.
+    register_fn(
+        PipelineSpec(
+            pipeline_name="azure_cu_layout",
+            provider_name="azure_content_understanding",
+            product_type=ProductType.PARSE,
+            config={
+                "analyzer_id": "prebuilt-layout",
+                "api_version": "2025-11-01",
+            },
+        )
+    )
+
     # =========================================================================
     # AWS Textract Pipelines
     # =========================================================================

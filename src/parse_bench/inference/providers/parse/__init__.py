@@ -10,6 +10,7 @@ _PROVIDER_MODULES = [
     "amazon_nova",
     "anthropic",
     "anyformat",
+    "azure_content_understanding",
     "azure_document_intelligence",
     "chandra2",
     "chunkr",
