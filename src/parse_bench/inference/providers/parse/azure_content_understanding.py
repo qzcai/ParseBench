@@ -20,12 +20,15 @@ Auth/config (env var or ``base_config`` key):
     ``prebuilt-layout``)
 """
 
+import json
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import json_repair
 from azure.ai.contentunderstanding import ContentUnderstandingClient
 from azure.ai.contentunderstanding.models import (
     AnalysisContent,
@@ -216,14 +219,19 @@ class AzureContentUnderstandingProvider(Provider):
         result = AnalysisResult(raw_result.raw_output)
         contents = result.contents or []
 
+        # Render each content's markdown with chart figures normalized to tables
+        # (so the chart metric can score them), reused for both the document-level
+        # markdown and the per-page IR.
+        content_markdown = [render_content_markdown(c) for c in contents]
+
         # Full-document markdown = concatenation of per-content markdown blocks.
-        markdown = "\n\n".join(c.markdown for c in contents if c.markdown).strip()
+        markdown = "\n\n".join(md for md in content_markdown if md).strip()
 
         # Coarse per-page IR (markdown is document-level; page_index from content range).
         pages: list[PageIR] = []
-        for c in contents:
+        for c, md in zip(contents, content_markdown, strict=True):
             start = int(getattr(c, "start_page_number", None) or 1)
-            pages.append(PageIR(page_index=max(start - 1, 0), markdown=c.markdown or ""))
+            pages.append(PageIR(page_index=max(start - 1, 0), markdown=md))
 
         layout_pages = _build_layout_pages(contents)
 
@@ -354,3 +362,382 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
         )
 
     return layout_pages
+
+
+# ---------------------------------------------------------------------------
+# Chart normalization
+# ---------------------------------------------------------------------------
+
+
+def fix_invalid_json_escapes(json_string):
+    # Replace any backslash not followed by a valid escape char with double backslash
+    # Valid escapes: ", \, /, b, f, n, r, t, u
+    return re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", json_string)
+
+
+def fix_extra_braces_safely(json_string):
+    """
+    Fixes extra closing braces that appear before a top-level key (e.g., before ,"options":).
+    This is a common error in some malformed Chart.js JSON strings.
+    The common error cases during testing is case in test_chartjs_to_table_markdown_error.
+    """
+    # Pattern: a closing brace followed by a comma and a quote (start of a new key)
+    # Only remove the first such occurrence to avoid over-correction
+    fixed, _ = re.subn(r'\}\s*,\s*"', ',"', json_string, count=1)
+    return fixed
+
+
+def chartjs_to_table_markdown_old(chartjs_str: str) -> str:
+    """
+    Convert a Chart.js JSON string to a Markdown table format.
+    Handles line, bar, area, scatter, bubble, pie, doughnut, radar, polarArea.
+
+    Args:
+        chartjs_str (str): Chart.js configuration as a JSON string.
+
+    Returns:
+        str: Markdown table representing the chart data.
+    """
+    chartjs_str = chartjs_str.strip()
+    if chartjs_str.startswith("'") and chartjs_str.endswith("'"):
+        chartjs_str = chartjs_str[1:-1]
+    try:
+        chart = json.loads(chartjs_str)
+    except Exception as e:
+        if "Invalid \\escape" in str(e):
+            chartjs_str = fix_invalid_json_escapes(chartjs_str)
+        elif "Extra data" in str(e):
+            chartjs_str = fix_extra_braces_safely(chartjs_str)
+        else:
+            logger.warning("failed_to_parse_chartjs_json: %s", e)
+            return f"```chart\n{chartjs_str}\n```"
+        try:
+            chart = json.loads(chartjs_str)
+        except Exception as e:
+            logger.warning("failed_to_parse_chartjs_json: %s", e)
+            return f"```chart\n{chartjs_str}\n```"
+
+    try:
+        if isinstance(chart, list):
+            all_datasets = []
+            all_labels = []
+            for c in chart:
+                # Defensive: skip if missing data
+                if not isinstance(c, dict) or "data" not in c:
+                    continue
+                ds = c["data"].get("datasets", [])
+                lbls = c["data"].get("labels", [])
+                all_datasets.extend(ds)
+                if not all_labels and lbls:
+                    all_labels = lbls
+            datasets = all_datasets
+            labels = all_labels
+            # Try to get chart_type from the first chart
+            chart_type = chart[0].get("type", "").lower() if chart else ""
+        else:
+            chart_type = chart.get("type", "").lower()
+            datasets = chart["data"]["datasets"]
+            labels = chart["data"].get("labels", [])
+
+        # BUBBLE: data = [{x, y, r}, ...]
+        if chart_type == "bubble" or (datasets and isinstance(datasets[0].get("data", [None])[0], dict) and "r" in datasets[0]["data"][0]):
+            # Check if any data point has a 'label' field
+            has_point_label = any("label" in pt for ds in datasets for pt in ds.get("data", []))
+            if has_point_label:
+                header = "| Dataset | x | y | r | Label |"
+                separator = "|---|---|---|---|---|"
+            else:
+                header = "| Dataset | x | y | r |"
+                separator = "|---|---|---|---|"
+            rows = []
+            for ds in datasets:
+                ds_label = ds.get("label", "Value")
+                for pt in ds["data"]:
+                    row = f"| {ds_label} | {pt.get('x', '')} | {pt.get('y', '')} | {pt.get('r', '')} "
+                    if has_point_label:
+                        row += f"| {pt.get('label', '')} "
+                    row += "|"
+                    rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # SCATTER: data = [{x, y}, ...]
+        if chart_type == "scatter" or (datasets and isinstance(datasets[0].get("data", [None])[0], dict) and "x" in datasets[0]["data"][0] and "y" in datasets[0]["data"][0]):
+            x_values = sorted({pt["x"] for ds in datasets for pt in ds["data"]})
+            header = "| x | " + " | ".join(ds.get("label", "Label") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            ds_maps = [{pt["x"]: pt["y"] for pt in ds["data"]} for ds in datasets]
+            rows = []
+            for x in x_values:
+                row = f"| {x} "
+                for ds_map in ds_maps:
+                    row += f"| {ds_map.get(x, '')} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # PIE/DOUGHNUT/POLARAREA: data = [number, ...], labels = [label, ...]
+        if chart_type in ("pie", "doughnut", "polararea"):
+            header = "| Label | " + " | ".join(ds.get("label", "Value") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            rows = []
+            for i, label in enumerate(labels):
+                row = f"| {label} "
+                for ds in datasets:
+                    value = ds["data"][i] if i < len(ds["data"]) else ""
+                    row += f"| {value} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # LINE/BAR/AREA/RADAR: data = [number, ...], labels = [label, ...]
+        if chart_type in ("line", "bar", "area", "radar") or labels:
+            header = "| Label | " + " | ".join(ds.get("label", "Value") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            rows = []
+            for i, label in enumerate(labels):
+                row = f"| {label} "
+                for ds in datasets:
+                    value = ds["data"][i] if i < len(ds["data"]) else ""
+                    row += f"| {value} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+    except Exception as e:
+        logger.warning("failed_to_process_chartjs_data: %s", e)
+
+    # Fallback: just dump the JSON
+    return f"```chart\n{chartjs_str}\n```"
+
+
+def strip_js_functions(json_string: str) -> str:
+    """Remove JS ``"callback"`` function entries from a Chart.js JSON string.
+
+    Chart.js configs sometimes embed executable callbacks, e.g.
+    ``"callback": function(value){ return value + '%'; }``. These are invalid
+    JSON and unsafe to keep, so the whole entry (and any leading comma) is removed.
+    ``\\*`` around the quotes tolerates escaped/double-escaped forms such as
+    ``\\"callback\\"`` found in double-encoded payloads.
+    """
+    return re.sub(
+        r',?\s*\\*"callback\\*"\s*:\s*function\s*\([^)]*\)\s*\{[^{}]*\}',
+        "",
+        json_string,
+    )
+
+
+def _load_chartjs(chartjs_str: str):
+    """Parse a Chart.js JSON string into a Python object, or ``None`` on failure.
+
+    Handles double-encoding: when a payload is a JSON string that itself encodes
+    JSON (e.g. ``"{\\"type\\":...}"``), the first ``json.loads`` succeeds and
+    yields a ``str`` rather than a dict. In that case the inner string is
+    re-processed recursively, so all follow-up parsing/repair operates on the
+    real config, not the outer string wrapper.
+
+    Some string-wrapped payloads are escaped inconsistently -- outer keys use
+    ``\\"`` while nested objects use plain ``"`` -- so ``json.loads`` cannot
+    unwrap them (the first unescaped quote terminates the string early). For
+    those, the outer wrapper quotes are dropped and ``\\"`` is normalized back to
+    ``"`` before re-processing, so parsing/repair runs on the real config.
+
+    For the real config, tries strict ``json.loads`` first, then two targeted
+    fixups (invalid escapes / extra braces), and finally falls back to
+    :mod:`json_repair`, which recovers the large majority of malformed Chart.js
+    payloads (unterminated strings, missing delimiters, trailing junk, etc.).
+    """
+    if "function" in chartjs_str:
+        # Chart.js embeds JS callbacks (e.g. tick formatters). These are invalid
+        # JSON and unsafe, so strip them before parsing.
+        chartjs_str = strip_js_functions(chartjs_str)
+    try:
+        obj = json.loads(chartjs_str)
+        # Double-encoded: first json.loads gives a str -> re-process the inner.
+        return _load_chartjs(obj) if isinstance(obj, str) else obj
+    except Exception as e:
+        # Inconsistently-escaped payload: outer keys use \" while nested objects
+        # use plain ", so json.loads can't unwrap it. Normalize \" -> " (but not
+        # \\" , an escaped backslash before a real quote) and re-process.
+        if '\\"' in chartjs_str:
+            unwrapped = re.sub(r'(?<!\\)\\"', '"', chartjs_str).strip().strip('"')
+            if unwrapped != chartjs_str:
+                return _load_chartjs(unwrapped)
+        if "Invalid \\escape" in str(e):
+            fixed = fix_invalid_json_escapes(chartjs_str)
+        elif "Extra data" in str(e):
+            fixed = fix_extra_braces_safely(chartjs_str)
+        else:
+            fixed = chartjs_str
+        try:
+            obj = json.loads(fixed)
+            return _load_chartjs(obj) if isinstance(obj, str) else obj
+        except Exception:
+            pass
+    try:
+        obj = json_repair.loads(chartjs_str)
+        return _load_chartjs(obj) if isinstance(obj, str) else obj
+    except Exception as e:
+        logger.warning("failed_to_parse_chartjs_json: %s", e)
+        return None
+
+
+def chartjs_to_table_markdown(chartjs_str: str) -> str:
+    """
+    Convert a Chart.js JSON string to a Markdown table format.
+    Handles line, bar, area, scatter, bubble, pie, doughnut, radar, polarArea.
+
+    Args:
+        chartjs_str (str): Chart.js configuration as a JSON string.
+
+    Returns:
+        str: Markdown table representing the chart data.
+    """
+    chartjs_str = chartjs_str.strip()
+    if chartjs_str.startswith("'") and chartjs_str.endswith("'"):
+        chartjs_str = chartjs_str[1:-1]
+
+    chart = _load_chartjs(chartjs_str)
+    if chart is None:
+        return f"```chart\n{chartjs_str}\n```"
+
+    try:
+        if isinstance(chart, list):
+            all_datasets = []
+            all_labels = []
+            for c in chart:
+                # Defensive: skip if missing data
+                if not isinstance(c, dict) or "data" not in c:
+                    continue
+                ds = c["data"].get("datasets", [])
+                lbls = c["data"].get("labels", [])
+                all_datasets.extend(ds)
+                if not all_labels and lbls:
+                    all_labels = lbls
+            datasets = all_datasets
+            labels = all_labels
+            # Try to get chart_type from the first chart
+            chart_type = chart[0].get("type", "").lower() if chart else ""
+        else:
+            chart_type = chart.get("type", "").lower()
+            datasets = chart["data"]["datasets"]
+            labels = chart["data"].get("labels", [])
+
+        # Inspect the shape of the first data point to route bubble/scatter safely.
+        # Chart types are routed by point shape rather than the declared ``type`` so
+        # that a chart mislabeled "scatter"/"bubble" but carrying a flat numeric
+        # ``data`` array does not crash (it falls through to the label/value table).
+        first_pt = None
+        if datasets and isinstance(datasets[0], dict):
+            data0 = datasets[0].get("data") or []
+            if data0:
+                first_pt = data0[0]
+        is_bubble = isinstance(first_pt, dict) and "r" in first_pt
+        is_xy = isinstance(first_pt, dict) and "x" in first_pt and "y" in first_pt
+
+        # BUBBLE: data = [{x, y, r}, ...]
+        if is_bubble:
+            # Check if any data point has a 'label' field
+            has_point_label = any("label" in pt for ds in datasets for pt in ds.get("data", []))
+            if has_point_label:
+                header = "| Dataset | x | y | r | Label |"
+                separator = "|---|---|---|---|---|"
+            else:
+                header = "| Dataset | x | y | r |"
+                separator = "|---|---|---|---|"
+            rows = []
+            for ds in datasets:
+                ds_label = ds.get("label", "Value")
+                for pt in ds["data"]:
+                    row = f"| {ds_label} | {pt.get('x', '')} | {pt.get('y', '')} | {pt.get('r', '')} "
+                    if has_point_label:
+                        row += f"| {pt.get('label', '')} "
+                    row += "|"
+                    rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # SCATTER: data = [{x, y}, ...]
+        if is_xy:
+            x_values = sorted({pt["x"] for ds in datasets for pt in ds["data"]})
+            header = "| x | " + " | ".join(ds.get("label", "Label") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            ds_maps = [{pt["x"]: pt["y"] for pt in ds["data"]} for ds in datasets]
+            rows = []
+            for x in x_values:
+                row = f"| {x} "
+                for ds_map in ds_maps:
+                    row += f"| {ds_map.get(x, '')} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # PIE/DOUGHNUT/POLARAREA: data = [number, ...], labels = [label, ...]
+        if chart_type in ("pie", "doughnut", "polararea"):
+            header = "| Label | " + " | ".join(ds.get("label", "Value") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            rows = []
+            for i, label in enumerate(labels):
+                row = f"| {label} "
+                for ds in datasets:
+                    value = ds["data"][i] if i < len(ds["data"]) else ""
+                    row += f"| {value} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+
+        # LINE/BAR/AREA/RADAR: data = [number, ...], labels = [label, ...]
+        if chart_type in ("line", "bar", "area", "radar") or labels:
+            header = "| Label | " + " | ".join(ds.get("label", "Value") for ds in datasets) + " |"
+            separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
+            rows = []
+            for i, label in enumerate(labels):
+                row = f"| {label} "
+                for ds in datasets:
+                    value = ds["data"][i] if i < len(ds["data"]) else ""
+                    row += f"| {value} "
+                row += "|"
+                rows.append(row)
+            return "\n".join([header, separator, *rows])
+    except Exception as e:
+        logger.warning("failed_to_process_chartjs_data: %s", e)
+
+    # Fallback: just dump the JSON
+    return f"```chart\n{chartjs_str}\n```"
+
+
+def render_content_markdown(content: AnalysisContent) -> str:
+    """Return a content's markdown with chart figures rendered as tables.
+
+    The chart metric only scores markdown/HTML tables, so each chart figure's
+    Chart.js config (``figure.content``) is converted to a markdown table via
+    :func:`chartjs_to_table_markdown`. The figure's ``span`` bounds the whole
+    figure region in the markdown (caption + OCR image blob + any raw
+    ```` ```chart ```` fence); it is replaced in full by the figure caption
+    (kept as table context) followed by the table. Figures whose config cannot
+    be converted are left untouched.
+    """
+    md = content.markdown or ""
+    if not md:
+        return md
+
+    edits: list[tuple[int, int, str]] = []
+    for fig in getattr(content, "figures", None) or []:
+        if fig.get("kind") != "chart" or fig.get("content") is None:
+            continue
+        span = fig.get("span")
+        if not span:
+            continue
+        raw = fig.get("content")
+        chartjs_str = raw if isinstance(raw, str) else json.dumps(raw)
+        table = chartjs_to_table_markdown(chartjs_str)
+        if table.startswith("```chart"):
+            continue  # unconvertible -> leave the figure untouched
+        start = int(span["offset"])
+        stop = start + int(span["length"])
+        caption = (fig.get("caption") or {}).get("content")
+        replacement = f"{caption}\n\n{table}" if caption else table
+        edits.append((start, stop, replacement))
+
+    # Apply back-to-front so earlier offsets stay valid.
+    for start, stop, replacement in sorted(edits, reverse=True):
+        md = md[:start] + replacement + md[stop:]
+
+    return md
