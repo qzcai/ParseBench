@@ -1443,6 +1443,15 @@ wheels = [
 ]
 
 [[package]]
+name = "json-repair"
+version = "0.61.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ff/7c/6d7c931fb6348f957154f9af926a77777a03ef0f6108c51cc2d7c9876a22/json_repair-0.61.2.tar.gz", hash = "sha256:b63ae5ad44c8720158e24bdd7e33506f7036174c287831b187a51619a6f58a34", size = 50539, upload-time = "2026-07-05T11:53:08.137Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ac/ba/c90076ab3fb22d43a31e2e53f56ffbaea25d524d8db3b38082779a562789/json_repair-0.61.2-py3-none-any.whl", hash = "sha256:779a0cdb48f609d6eb669273023cf4c92b5ac6d80a496eb919ee93c84c351ec8", size = 48977, upload-time = "2026-07-05T11:53:06.774Z" },
+]
+
+[[package]]
 name = "jsonref"
 version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2693,6 +2702,7 @@ runners = [
     { name = "google-genai" },
     { name = "httpx" },
     { name = "infinity-parser2" },
+    { name = "json-repair" },
     { name = "landingai-ade" },
     { name = "llama-cloud" },
     { name = "openai" },
@@ -2750,6 +2760,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'upstage'", specifier = ">=0.28.0" },
     { name = "huggingface-hub", specifier = ">=0.20.0" },
     { name = "infinity-parser2", marker = "extra == 'runners'", specifier = ">=0.3.0" },
+    { name = "json-repair", marker = "extra == 'runners'", specifier = ">=0.61.0" },
     { name = "landingai-ade", marker = "extra == 'landingai'", specifier = ">=1.4.0" },
     { name = "landingai-ade", marker = "extra == 'runners'", specifier = ">=1.4.0" },
     { name = "liteparse", marker = "extra == 'liteparse'", specifier = ">=2.14.3" },
