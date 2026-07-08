@@ -447,6 +447,22 @@ def register_parse_pipelines(register_fn) -> None:  # type: ignore[no-untyped-de
         )
     )
 
+    # Azure Content Understanding using the prebuilt-documentSearch analyzer:
+    # same layout output as azure_cu_layout, plus figure/chart understanding.
+    # Charts come back as Chart.js JSON in figures[].content, which the provider
+    # converts to markdown tables so the chart metric can score data points.
+    register_fn(
+        PipelineSpec(
+            pipeline_name="azure_cu_search",
+            provider_name="azure_content_understanding",
+            product_type=ProductType.PARSE,
+            config={
+                "analyzer_id": "prebuilt-documentSearch",
+                "api_version": "2025-11-01",
+            },
+        )
+    )
+
     # =========================================================================
     # AWS Textract Pipelines
     # =========================================================================
