@@ -152,6 +152,7 @@ tables), reading order, and layout/figure bounding boxes.
 | Pipeline | Description | Env Vars |
 |---|---|---|
 | **`azure_cu_layout`** | `prebuilt-layout` analyzer — markdown, tables, reading order, layout grounding. No LLM deployment required (clean baseline, analogous to `azure_di_layout`). | `AZURE_CONTENT_UNDERSTANDING_KEY`, `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` |
+| **`azure_cu_search`** | `prebuilt-documentSearch` analyzer — everything `azure_cu_layout` provides plus figure/chart understanding. Charts are returned as Chart.js and converted to markdown tables in place (preserving reading order) so the chart metric can score data points. | `AZURE_CONTENT_UNDERSTANDING_KEY`, `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` |
 
 ### AWS Textract
 
