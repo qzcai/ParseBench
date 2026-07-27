@@ -69,6 +69,7 @@ from parse_bench.schemas.pipeline_io import (
 from parse_bench.schemas.product import ProductType
 
 _MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
+_AZURE_OCR_PATH = "/providers/mistral/azure/ocr"
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +362,17 @@ class MistralOCRProvider(Provider):
             )
         self._api_key: str = str(api_key)
 
+        provider = os.getenv("MISTRAL_OCR_PROVIDER", "mistral").lower()
+        if provider == "azure":
+            endpoint = os.getenv("MISTRAL_API_ENDPOINT")
+            if not endpoint:
+                raise ProviderConfigError("Azure-hosted Mistral requires MISTRAL_API_ENDPOINT.")
+            self._endpoint = f"{endpoint.rstrip('/')}{_AZURE_OCR_PATH}"
+        elif provider == "mistral":
+            self._endpoint = _MISTRAL_OCR_URL
+        else:
+            raise ProviderConfigError("MISTRAL_OCR_PROVIDER must be 'mistral' or 'azure'.")
+
         self._model: str = self.base_config.get("model", "mistral-ocr-4-0")
         self._include_blocks: bool = self.base_config.get("include_blocks", True)
         self._max_pages: int = self.base_config.get("max_pages", 50)
@@ -437,7 +449,7 @@ class MistralOCRProvider(Provider):
         for attempt in range(self._rate_limit_retries + 1):
             try:
                 resp = requests.post(
-                    _MISTRAL_OCR_URL,
+                    self._endpoint,
                     json=payload,
                     headers=headers,
                     timeout=self._timeout,
