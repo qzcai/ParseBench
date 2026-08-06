@@ -320,6 +320,7 @@ class LayoutDetectionModel(StrEnum):
     NEMOTRON_PARSE_LAYOUT = "nemotron_parse_layout"
     UNLIMITED_OCR_2_LAYOUT = "unlimited_ocr_2_layout"
     OVISOCR3_LAYOUT = "ovisocr3_layout"
+    MISTRAL_OCR_LAYOUT = "mistral_ocr_layout"
     DATABRICKS_LAYOUT = "databricks_layout"
     INFINITY_PARSER2_LAYOUT = "infinity_parser2_layout"
     OI_PARSER_LAYOUT = "oi_parser_layout"
