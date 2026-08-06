@@ -318,6 +318,7 @@ class LayoutDetectionModel(StrEnum):
     GEMMA4_LAYOUT = "gemma4_layout"
     HUNYUANOCR_LAYOUT = "hunyuanocr_layout"
     NEMOTRON_PARSE_LAYOUT = "nemotron_parse_layout"
+    MISTRAL_OCR_LAYOUT = "mistral_ocr_layout"
     DATABRICKS_LAYOUT = "databricks_layout"
     INFINITY_PARSER2_LAYOUT = "infinity_parser2_layout"
     OI_PARSER_LAYOUT = "oi_parser_layout"
