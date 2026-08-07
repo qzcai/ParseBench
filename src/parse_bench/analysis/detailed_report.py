@@ -94,11 +94,24 @@ def _render_markdown_to_html(md_text: str) -> str:
     return str(bleach.clean(rendered, tags=allowed_tags, attributes=allowed_attrs))
 
 
+def _format_evaluation_checks(checks: list[dict[str, Any]]) -> str:
+    """Format dataset rules for the existing expected-output panel."""
+    count = len(checks)
+    noun = "check" if count == 1 else "checks"
+    return (
+        f"Evaluation checks ({count} {noun})\n\n"
+        "```json\n"
+        f"{json.dumps(checks, indent=2, ensure_ascii=False)}\n"
+        "```"
+    )
+
+
 def _build_data_blob(
     summary: EvaluationSummary,
     output_dir: Path | None = None,
     test_cases_dir: Path | None = None,
     pdf_base_url: str = "",
+    group: str | None = None,
 ) -> dict[str, Any]:
     """Build the JSON data blob that powers the client-side rendering."""
 
@@ -158,6 +171,50 @@ def _build_data_blob(
                     expected_map[test_id] = json.dumps(data["expected_output"], indent=2, ensure_ascii=False)
             except Exception:
                 pass
+
+        # Hugging Face datasets use category JSONL files instead of sidecars.
+        # Preserve sidecar and expected-markdown precedence, then show the
+        # evaluator checks when no rendered reference output exists.
+        jsonl_expected_map: dict[str, str] = {}
+        checks_map: dict[str, list[dict[str, Any]]] = {}
+        dataset_files = [test_cases_dir / f"{group}.jsonl"] if group else list(test_cases_dir.glob("*.jsonl"))
+        for dataset_file in dataset_files:
+            if not dataset_file.is_file():
+                continue
+            for line in dataset_file.read_text(encoding="utf-8").splitlines():
+                try:
+                    data = json.loads(line)
+                    pdf = data.get("pdf")
+                    if not isinstance(pdf, str) or not pdf:
+                        continue
+                    test_id = Path(pdf).stem
+                    if data.get("expected_markdown"):
+                        jsonl_expected_map.setdefault(test_id, data["expected_markdown"])
+                    elif data.get("expected_output"):
+                        jsonl_expected_map.setdefault(
+                            test_id,
+                            json.dumps(data["expected_output"], indent=2, ensure_ascii=False),
+                        )
+                    else:
+                        rule = data.get("rule")
+                        if isinstance(rule, str):
+                            try:
+                                rule = json.loads(rule)
+                            except json.JSONDecodeError:
+                                pass
+                        checks_map.setdefault(test_id, []).append(
+                            {
+                                "type": data.get("type", ""),
+                                "rule": rule,
+                            }
+                        )
+                except Exception:
+                    pass
+
+        for test_id, expected_output in jsonl_expected_map.items():
+            expected_map.setdefault(test_id, expected_output)
+        for test_id, checks in checks_map.items():
+            expected_map.setdefault(test_id, _format_evaluation_checks(checks))
 
     # --- aggregate metrics (group avg/min/max) ---
     # Per-doc table count metrics are bookkeeping, not quality scores --
@@ -2186,6 +2243,7 @@ def generate_detailed_html_report(
         output_dir=output_dir,
         test_cases_dir=test_cases_dir,
         pdf_base_url=resolved_pdf_base_url,
+        group=group,
     )
 
     # Add run info to data blob
