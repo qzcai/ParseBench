@@ -187,6 +187,8 @@ class AnalysisCLI:
                             output_dir=str(cat_dir) if output_dir is None else output_dir,
                             output_file=None,
                             pdf_base_url=pdf_base_url,
+                            pipeline_name=pipeline_name,
+                            group=cat_dir.name,
                         )
                         if ret == 0:
                             generated.append(cat_dir.name)
