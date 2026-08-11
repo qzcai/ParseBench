@@ -14,6 +14,7 @@ It should be run as a separate step after evaluation to explore results in detai
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -51,6 +52,9 @@ def _render_markdown_to_html(md_text: str) -> str:
     # Restore original HTML tables
     for placeholder, table_html in table_placeholders.items():
         rendered = rendered.replace(placeholder, table_html)
+
+    if os.environ.get("PARSE_BENCH_SANITIZE_REPORT_HTML") == "0":
+        return str(rendered)
 
     allowed_tags = bleach.sanitizer.ALLOWED_TAGS | {
         "table",
