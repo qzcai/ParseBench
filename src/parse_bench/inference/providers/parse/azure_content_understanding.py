@@ -719,6 +719,28 @@ def chartjs_to_table_markdown(chartjs_str: str) -> str:
     return f"```chart\n{chartjs_str}\n```"
 
 
+def _apply_markdown_edits(md: str, edits: list[tuple[int, int, str]]) -> str:
+    """Apply edits right-to-left, keeping the first of any overlapping spans."""
+    last_start = len(md)
+
+    # A larger end offset comes first. For equal ends, the smaller start offset
+    # puts the parent span before a nested span.
+    ordered = sorted(edits, key=lambda edit: (edit[1], -edit[0]), reverse=True)
+    for start, stop, replacement in ordered:
+        if stop > last_start:
+            logger.warning(
+                "skipping_overlapping_cu_markdown_edit: span=[%d, %d)",
+                start,
+                stop,
+            )
+            continue
+
+        md = md[:start] + replacement + md[stop:]
+        last_start = start
+
+    return md
+
+
 def render_content_markdown(content: AnalysisContent) -> str:
     """Return content Markdown with charts and page furniture normalized.
 
@@ -762,10 +784,9 @@ def render_content_markdown(content: AnalysisContent) -> str:
             raise ValueError(f"CU {role} paragraph has no span")
         start = int(paragraph.span.offset)
         stop = start + int(paragraph.span.length)
-        edits.append((start, stop, paragraph.content or ""))
+        replacement = paragraph.content or ""
+        if replacement:
+            replacement = f" {replacement} "
+        edits.append((start, stop, replacement))
 
-    # Apply back-to-front so all spans remain relative to the original Markdown.
-    for start, stop, replacement in sorted(edits, key=lambda edit: edit[0], reverse=True):
-        md = md[:start] + replacement + md[stop:]
-
-    return md
+    return _apply_markdown_edits(md, edits)
