@@ -235,6 +235,7 @@ class PipelineCLI:
             force=force,
             group=group,
             report_dir=str(actual_report_dir),
+            export_detailed_html=False,
         )
 
         if exit_code != 0:
@@ -339,6 +340,7 @@ class PipelineCLI:
                 force=force,
                 group=g,
                 report_dir=str(group_report_dir),
+                export_detailed_html=False,
             )
 
             if exit_code != 0:
@@ -500,6 +502,7 @@ class PipelineCLI:
                 test_cases_dir=temp_path,
                 verbose=verbose,
                 force=force,
+                export_detailed_html=False,
             )
 
             if exit_code != 0:
