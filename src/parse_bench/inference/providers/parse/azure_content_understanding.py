@@ -16,8 +16,8 @@ access rather than raw-dict digging.
 Auth/config (env var or ``base_config`` key):
   * ``AZURE_CONTENT_UNDERSTANDING_KEY`` / ``api_key`` (``AzureKeyCredential``)
   * ``AZURE_CONTENT_UNDERSTANDING_ENDPOINT`` / ``endpoint``
-  * ``api_version`` (default ``2025-11-01``), ``analyzer_id`` (default
-    ``prebuilt-layout``)
+  * ``AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID`` / ``analyzer_id``
+  * ``api_version`` (default ``2025-11-01``)
 """
 
 import json
@@ -102,7 +102,8 @@ class AzureContentUnderstandingProvider(Provider):
             - ``endpoint``: Content Understanding endpoint URL
               (defaults to ``AZURE_CONTENT_UNDERSTANDING_ENDPOINT`` env var)
             - ``api_version``: REST API version (default: ``2025-11-01``)
-            - ``analyzer_id``: Analyzer to use (default: ``prebuilt-layout``)
+            - ``analyzer_id``: Analyzer to use (defaults to
+              ``AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID``)
         """
         super().__init__(provider_name, base_config)
 
@@ -124,7 +125,15 @@ class AzureContentUnderstandingProvider(Provider):
             )
 
         self._api_version = self.base_config.get("api_version", _DEFAULT_API_VERSION)
-        self._analyzer_id = self.base_config.get("analyzer_id", "prebuilt-layout")
+        self._analyzer_id = self.base_config.get("analyzer_id") or os.getenv(
+            "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID"
+        )
+        if not self._analyzer_id:
+            raise ProviderConfigError(
+                "Azure Content Understanding analyzer ID is required. "
+                "Set AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID environment variable "
+                "or pass analyzer_id in base_config."
+            )
 
         # Initialize the SDK client (mirrors the azure_document_intelligence provider).
         self._client = ContentUnderstandingClient(
