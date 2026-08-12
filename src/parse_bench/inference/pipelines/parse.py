@@ -431,10 +431,19 @@ def register_parse_pipelines(register_fn) -> None:  # type: ignore[no-untyped-de
     # Azure Content Understanding
     # ===========================
 
-    # Azure Content Understanding (successor to Document Intelligence) using the
-    # prebuilt-layout analyzer: markdown with HTML tables, reading order, and
-    # layout/figure bounding boxes. Works out of the box (no LLM dependency, no
-    # model deployment) — the clean baseline analogous to azure_di_layout.
+    # Azure Content Understanding (successor to Document Intelligence). The
+    # analyzer is selected through AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID.
+    register_fn(
+        PipelineSpec(
+            pipeline_name="azure_cu",
+            provider_name="azure_content_understanding",
+            product_type=ProductType.PARSE,
+            config={
+                "api_version": "2025-11-01",
+            },
+        )
+    )
+
     register_fn(
         PipelineSpec(
             pipeline_name="azure_cu_layout",
@@ -447,10 +456,6 @@ def register_parse_pipelines(register_fn) -> None:  # type: ignore[no-untyped-de
         )
     )
 
-    # Azure Content Understanding using the prebuilt-documentSearch analyzer:
-    # same layout output as azure_cu_layout, plus figure/chart understanding.
-    # Charts come back as Chart.js JSON in figures[].content, which the provider
-    # converts to markdown tables so the chart metric can score data points.
     register_fn(
         PipelineSpec(
             pipeline_name="azure_cu_search",
