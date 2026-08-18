@@ -20,10 +20,14 @@ Auth/config (env var or ``base_config`` key):
   * ``api_version`` (default ``2025-11-01``)
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
 import re
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -74,7 +78,6 @@ CU_LABEL_MAP: dict[str, str] = {
     "pageHeader": "Page-header",
     "pageFooter": "Page-footer",
     "footnote": "Footnote",
-    "pageNumber": "Page-footer",
 }
 
 # Default label for paragraphs without a recognized role.
@@ -271,20 +274,274 @@ class AzureContentUnderstandingProvider(Provider):
 # ---------------------------------------------------------------------------
 
 
-def _polygon_to_normalized_bbox(
-    polygon: list[float],
-    page_width: float,
-    page_height: float,
-) -> tuple[float, float, float, float]:
-    """Convert an 8-float corner polygon (page units) to normalized [0,1] xywh."""
-    xs = [polygon[i] for i in range(0, len(polygon), 2)]
-    ys = [polygon[i] for i in range(1, len(polygon), 2)]
+def _to_normalized_bbox(
+    source: str | None,
+    page_dims: dict[int, tuple[float, float]],
+) -> tuple[int, float, float, float, float]:
+    if not source:
+        raise ValueError("CU element has no source region")
+
+    regions = source.split(";")
+    if len(regions) > 1:
+        logger.warning("CU source has %d regions; using the first: %s", len(regions), source)
+
+    encoded = regions[0]
+    if not encoded.startswith("D(") or not encoded.endswith(")"):
+        raise ValueError(f"Malformed CU source region: {source}")
+    try:
+        values = [float(value) for value in encoded[2:-1].split(",")]
+    except ValueError as error:
+        raise ValueError(f"Malformed CU source region: {source}") from error
+    if len(values) < 9:
+        raise ValueError(f"Malformed CU source region: {source}")
+
+    page_number = int(values[0])
+    xs = values[1:9:2]
+    ys = values[2:9:2]
     x_min, y_min, x_max, y_max = min(xs), min(ys), max(xs), max(ys)
-    nx = x_min / page_width if page_width > 0 else 0.0
-    ny = y_min / page_height if page_height > 0 else 0.0
-    nw = (x_max - x_min) / page_width if page_width > 0 else 0.0
-    nh = (y_max - y_min) / page_height if page_height > 0 else 0.0
-    return (nx, ny, nw, nh)
+    page_width, page_height = page_dims.get(page_number, (1.0, 1.0))
+    return (
+        page_number,
+        x_min / page_width if page_width > 0 else 0.0,
+        y_min / page_height if page_height > 0 else 0.0,
+        (x_max - x_min) / page_width if page_width > 0 else 0.0,
+        (y_max - y_min) / page_height if page_height > 0 else 0.0,
+    )
+
+
+def _parse_element_reference(reference: str) -> tuple[str, int]:
+    """Parse ``/<element-type>/<index>`` into its typed components."""
+    if not reference.startswith("/"):
+        raise ValueError(f"Invalid CU element reference: {reference}")
+    parts = reference.removeprefix("/").split("/")
+    if len(parts) != 2:
+        raise ValueError(f"Invalid CU element reference: {reference}")
+    try:
+        index = int(parts[1])
+    except ValueError:
+        raise ValueError(f"Invalid CU element reference: {reference}") from None
+    return parts[0], index
+
+
+@dataclass(frozen=True)
+class CULayoutItem:
+    element_type: str
+    element_index: int
+    page_number: int
+    item: LayoutItemIR
+
+
+def _build_paragraph(
+    index: int,
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> CULayoutItem:
+    paragraph = list(content.paragraphs or [])[index]
+    page_number, x, y, width, height = _to_normalized_bbox(paragraph.source, page_dims)
+    label = CU_LABEL_MAP.get(paragraph.role, _DEFAULT_PARAGRAPH_LABEL)
+    if paragraph.role == "pageNumber":
+        label = "Page-header" if y + height / 2 < 0.5 else "Page-footer"
+    segment = LayoutSegmentIR(
+        x=x,
+        y=y,
+        w=width,
+        h=height,
+        confidence=1.0,
+        label=label,
+    )
+    return CULayoutItem(
+        element_type="paragraphs",
+        element_index=index,
+        page_number=page_number,
+        item=LayoutItemIR(
+            type="text",
+            value=paragraph.content or "",
+            bbox=segment,
+            layout_segments=[segment],
+        ),
+    )
+
+
+def _build_table(
+    index: int,
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> list[CULayoutItem]:
+    table = list(content.tables or [])[index]
+    page_number, x, y, width, height = _to_normalized_bbox(table.source, page_dims)
+    segment = LayoutSegmentIR(
+        x=x,
+        y=y,
+        w=width,
+        h=height,
+        confidence=1.0,
+        label="Table",
+    )
+    content_items = [
+        item
+        for cell in table.cells or []
+        for reference in (cell.elements or [])
+        for item in _build_layout_item(reference, content, page_dims)
+    ]
+    caption_items = [
+        item
+        for reference in (table.caption.elements or [] if table.caption else [])
+        for item in _build_layout_item(reference, content, page_dims)
+    ]
+    footnote_items = [
+        item
+        for footnote in table.footnotes or []
+        for reference in footnote.elements or []
+        for item in _build_layout_item(reference, content, page_dims)
+    ]
+
+    table_item = CULayoutItem(
+        element_type="tables",
+        element_index=index,
+        page_number=page_number,
+        item=LayoutItemIR(
+            type="table",
+            value=" ".join(cell.content for cell in (table.cells or []) if cell.content),
+            bbox=segment,
+            layout_segments=[segment],
+        ),
+    )
+
+    caption_before = not content_items or (
+        caption_items and caption_items[0].element_index < content_items[0].element_index
+    )
+    footnote_before = not content_items or (
+        footnote_items and footnote_items[0].element_index < content_items[0].element_index
+    )
+
+    items = [table_item]
+    items.extend(caption_items if caption_before else [])
+    items.extend(footnote_items if footnote_before else [])
+    items.extend(content_items)
+    items.extend(caption_items if not caption_before else [])
+    items.extend(footnote_items if not footnote_before else [])
+    return items
+
+
+def _build_figure(
+    index: int,
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> list[CULayoutItem]:
+    figure = list(content.figures or [])[index]
+    paragraphs = list(content.paragraphs or [])
+    texts = [
+        paragraphs[paragraph_index].content
+        for reference in dict.fromkeys(figure.elements or [])
+        for element_type, paragraph_index in [_parse_element_reference(reference)]
+        if element_type == "paragraphs" and paragraphs[paragraph_index].content
+    ]
+    page_number, x, y, width, height = _to_normalized_bbox(figure.source, page_dims)
+    segment = LayoutSegmentIR(
+        x=x,
+        y=y,
+        w=width,
+        h=height,
+        confidence=1.0,
+        label="Picture",
+    )
+    content_items = [
+            item
+            for reference in figure.elements or []
+            for item in _build_layout_item(reference, content, page_dims)
+    ]
+    caption_items = [
+        item
+        for reference in (figure.caption.elements or [] if figure.caption else [])
+        for item in _build_layout_item(reference, content, page_dims)
+    ]
+    footnote_items = [
+        item
+        for footnote in figure.footnotes or []
+        for reference in footnote.elements or []
+        for item in _build_layout_item(reference, content, page_dims)
+    ]
+
+    caption_before = not content_items or (
+        caption_items and caption_items[0].element_index < content_items[0].element_index
+    )
+    footnote_before = not content_items or (
+        footnote_items and footnote_items[0].element_index < content_items[0].element_index
+    )
+
+    figure_item = CULayoutItem(
+        element_type="figures",
+        element_index=index,
+        page_number=page_number,
+        item=LayoutItemIR(
+            type="image",
+            value=" ".join(texts) if texts else getattr(figure.caption, "content", None) or "",
+            bbox=segment,
+            layout_segments=[segment],
+        ),
+    )
+    items = [figure_item]
+    items.extend(caption_items if caption_before else [])
+    items.extend(footnote_items if footnote_before else [])
+    items.extend(content_items)
+    items.extend(caption_items if not caption_before else [])
+    items.extend(footnote_items if not footnote_before else [])
+    return items
+
+
+def _build_section(
+    index: int,
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> list[CULayoutItem]:
+    section = list(content.sections or [])[index]
+    items: list[CULayoutItem] = []
+    for reference in section.elements or []:
+        items.extend(_build_layout_item(reference, content, page_dims))
+    return items
+
+
+def _build_layout_item(
+    reference: str,
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> list[CULayoutItem]:
+    element_type, index = _parse_element_reference(reference)
+    collection = getattr(content, element_type, None)
+    if collection is None or index < 0 or index >= len(collection):
+        raise ValueError(f"CU element reference out of range: {reference}")
+    if element_type == "paragraphs":
+        return [_build_paragraph(index, content, page_dims)]
+    if element_type == "tables":
+        return _build_table(index, content, page_dims)
+    if element_type == "figures":
+        return _build_figure(index, content, page_dims)
+    return _build_section(index, content, page_dims)
+
+
+def _insert_page_furniture(
+    items: list[CULayoutItem],
+    content: DocumentContent,
+    page_dims: dict[int, tuple[float, float]],
+) -> None:
+    referenced_paragraphs = {
+        item.element_index
+        for item in items
+        if item.element_type == "paragraphs"
+    }
+    for index, paragraph in enumerate(content.paragraphs or []):
+        if (
+            paragraph.role not in _PAGE_FURNITURE_ROLES
+            or index in referenced_paragraphs
+        ):
+            continue
+        position = 0
+        while position < len(items):
+            item = items[position]
+            if item.element_type == "paragraphs" and item.element_index >= index:
+                break
+            position += 1
+        items.insert(position, _build_paragraph(index, content, page_dims))
 
 
 def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPageIR]:
@@ -294,99 +551,60 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
     page using the source-polygon page index and converts CU polygon coordinates
     (page units) into normalized [0,1] ``LayoutSegmentIR`` entries.
     """
-    from collections import defaultdict
-
     # Only document contents carry pages/paragraphs/tables/figures.
     document_contents = [c for c in contents if isinstance(c, DocumentContent)]
 
-    # page dimensions (inches) keyed by page number.
-    page_dims: dict[int, tuple[float, float]] = {}
-    for content in document_contents:
-        for page in content.pages or []:
-            pnum = int(page.page_number or 1)
-            width = float(page.width or 1.0)
-            height = float(page.height or 1.0)
-            page_dims[pnum] = (width, height)
-
-    # (label, nx, ny, nw, nh, content, confidence) grouped by page.
-    pages_items: dict[int, list[tuple[str, float, float, float, float, str, float]]] = defaultdict(list)
+    page_items: dict[int, list[LayoutItemIR]] = defaultdict(list)
     page_headers: dict[int, list[str]] = defaultdict(list)
     page_footers: dict[int, list[str]] = defaultdict(list)
     page_numbers: dict[int, list[str]] = defaultdict(list)
 
-    def _add(label: str, source: str | None, text: str | None) -> int:
-        # Every layout element must carry a position; an empty source is a bug.
-        if not source:
-            raise ValueError(f"CU element '{label}' has no source polygon")
-        # Text is optional (e.g. a figure with no caption is still a valid box).
-        text = text or ""
-        # CU encodes position as ``D(page, x1,y1, ..., x4,y4)``. An element spanning
-        # multiple non-contiguous regions is a ``;``-separated list of D(...) blocks;
-        # we only need one bbox, so warn and take the first.
-        regions = source.split(";")
-        if len(regions) > 1:
-            logger.warning("CU source has %d regions; using the first: %s", len(regions), source)
-        # Strip the ``D(`` prefix and ``)`` suffix, then require a page + 4 corners.
-        nums = [float(x) for x in regions[0][2:-1].split(",")]
-        assert len(nums) >= 9, f"Malformed CU source polygon: {source}"
-
-        page_num, polygon = int(nums[0]), nums[1:9]
-        pw, ph = page_dims.get(page_num, (1.0, 1.0))
-        nx, ny, nw, nh = _polygon_to_normalized_bbox(polygon, pw, ph)
-        pages_items[page_num].append((label, nx, ny, nw, nh, text, 1.0))
-        return page_num
-
     for content in document_contents:
-        # Paragraphs -> text / heading / header / footer elements.
-        for para in content.paragraphs or []:
-            role = para.role
-            label = CU_LABEL_MAP.get(role, _DEFAULT_PARAGRAPH_LABEL) if role else _DEFAULT_PARAGRAPH_LABEL
-            page_num = _add(label, para.source, para.content)
-            text = para.content or ""
-            if role == "pageHeader" and text:
-                page_headers[page_num].append(text)
-            elif role == "pageFooter" and text:
-                page_footers[page_num].append(text)
-            elif role == "pageNumber" and text:
-                page_footers[page_num].append(text)
-                page_numbers[page_num].append(text)
-
-        # Tables -> Table elements (CU table objects carry their own source).
-        for table in content.tables or []:
-            text = " ".join(cell.content for cell in (table.cells or []) if cell.content)
-            _add("Table", table.source, text)
-
-        # Figures (charts/images) -> Picture elements.
-        for fig in content.figures or []:
-            caption = fig.caption.content if fig.caption else None
-            _add("Picture", fig.source, caption)
-
-    layout_pages: list[ParseLayoutPageIR] = []
-    for page_num in sorted(pages_items.keys()):
-        items: list[LayoutItemIR] = []
-        for label, nx, ny, nw, nh, text, confidence in pages_items[page_num]:
-            seg = LayoutSegmentIR(x=nx, y=ny, w=nw, h=nh, confidence=confidence, label=label)
-            norm = label.strip().lower()
-            if norm == "table":
-                item_type = "table"
-            elif norm == "picture":
-                item_type = "image"
-            else:
-                item_type = "text"
-            items.append(LayoutItemIR(type=item_type, value=text, bbox=seg, layout_segments=[seg]))
-        layout_pages.append(
-            ParseLayoutPageIR(
-                page_number=page_num,
-                width=_VIRTUAL_PAGE_DIM,
-                height=_VIRTUAL_PAGE_DIM,
-                page_header_markdown="\n".join(page_headers[page_num]),
-                page_footer_markdown="\n".join(page_footers[page_num]),
-                printed_page_number="\n".join(page_numbers[page_num]),
-                items=items,
+        page_dims = {
+            int(page.page_number or 1): (
+                float(page.width or 1.0),
+                float(page.height or 1.0),
             )
-        )
+            for page in content.pages or []
+        }
 
-    return layout_pages
+        if not content.sections:
+            logger.warning("CU document content has no sections; using paragraph order")
+            layout_items = [
+                _build_paragraph(index, content, page_dims)
+                for index, _ in enumerate(content.paragraphs or [])
+            ]
+        else:
+            # Build the layout items for the top level section (index 0) which contains all the elements in reading order.
+            layout_items = _build_layout_item("/sections/0", content, page_dims)
+
+            # Insert remaining page furniture paragraphs (headers/footers/page numbers)
+            _insert_page_furniture(layout_items, content, page_dims)
+
+        for item in layout_items:
+            page_items[item.page_number].append(item.item)
+            if item.element_type != "paragraphs":
+                continue
+            paragraph = list(content.paragraphs or [])[item.element_index]
+            if item.item.bbox.label == "Page-header" and item.item.value:
+                page_headers[item.page_number].append(item.item.value)
+            elif item.item.bbox.label == "Page-footer" and item.item.value:
+                page_footers[item.page_number].append(item.item.value)
+            if paragraph.role == "pageNumber" and item.item.value:
+                page_numbers[item.page_number].append(item.item.value)
+
+    return [
+        ParseLayoutPageIR(
+            page_number=page_num,
+            width=_VIRTUAL_PAGE_DIM,
+            height=_VIRTUAL_PAGE_DIM,
+            page_header_markdown="\n".join(page_headers[page_num]),
+            page_footer_markdown="\n".join(page_footers[page_num]),
+            printed_page_number="\n".join(page_numbers[page_num]),
+            items=page_items[page_num],
+        )
+        for page_num in sorted(page_items)
+    ]
 
 
 # ---------------------------------------------------------------------------
