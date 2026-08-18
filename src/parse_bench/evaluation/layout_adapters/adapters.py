@@ -2479,7 +2479,7 @@ class AzureCULayoutAdapter(LayoutAdapter):
                     x2 = (seg.x + seg.w) * page_w
                     y2 = (seg.y + seg.h) * page_h
 
-                    content = _build_vendor_content(label, item.value)
+                    content = _build_azure_cu_content(label, item.value)
 
                     predictions.append(
                         LayoutPrediction(
@@ -2691,6 +2691,15 @@ class UnstructuredLayoutAdapter(LayoutAdapter):
             predictions=predictions,
             layout_pages=[page.model_copy(update={"items": []}) for page in layout_pages],
         )
+
+
+def _build_azure_cu_content(label: str, text: str) -> LayoutTextContent | LayoutTableContent | None:
+    """Build content while preserving OCR text attributed to CU figures."""
+    if not text:
+        return None
+    if label.strip().lower() == "picture":
+        return LayoutTextContent(text=text)
+    return _build_vendor_content(label, text)
 
 
 def _build_vendor_content(label: str, text: str) -> LayoutTextContent | LayoutTableContent | None:
