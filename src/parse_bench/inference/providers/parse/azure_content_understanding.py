@@ -751,7 +751,7 @@ def _apply_markdown_edits(md: str, edits: list[tuple[int, int, str]]) -> str:
 
 
 def render_content_markdown(content: AnalysisContent) -> str:
-    """Return content Markdown with charts and page furniture normalized.
+    """Return content Markdown with links, charts, and page furniture normalized.
 
     The chart metric only scores markdown/HTML tables, so each chart figure's
     Chart.js config (``figure.content``) is converted to a markdown table via
@@ -761,7 +761,9 @@ def render_content_markdown(content: AnalysisContent) -> str:
     (kept as table context) followed by the table. Figures whose config cannot
     be converted are left untouched. Page headers, footers, and numbers are
     replaced with their typed paragraph content so text metrics can evaluate
-    them instead of losing their payload inside HTML comments.
+    them instead of losing their payload inside HTML comments. Hyperlinks with
+    structured spans are replaced with their visible content; spanless links
+    are preserved because they cannot be located authoritatively.
     """
     md = content.markdown or ""
     if not md:
@@ -797,5 +799,12 @@ def render_content_markdown(content: AnalysisContent) -> str:
         if replacement:
             replacement = f" {replacement} "
         edits.append((start, stop, replacement))
+
+    for hyperlink in getattr(content, "hyperlinks", None) or []:
+        if hyperlink.span is None:
+            continue
+        start = int(hyperlink.span.offset)
+        stop = start + int(hyperlink.span.length)
+        edits.append((start, stop, hyperlink.content or ""))
 
     return _apply_markdown_edits(md, edits)
