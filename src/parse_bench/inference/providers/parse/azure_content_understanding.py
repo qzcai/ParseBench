@@ -986,9 +986,11 @@ def render_content_markdown(content: AnalysisContent) -> str:
     (kept as table context) followed by the table. Figures whose config cannot
     be converted are left untouched. Page headers, footers, and numbers are
     replaced with their typed paragraph content so text metrics can evaluate
-    them instead of losing their payload inside HTML comments. Hyperlinks with
-    structured spans are replaced with their visible content; spanless links
-    are preserved because they cannot be located authoritatively.
+    them instead of losing their payload inside HTML comments. Bold and italic
+    tags in these replacements use ``<b>`` and ``<i>`` so text metrics can ignore
+    the markup without losing the styling. Hyperlinks with structured spans are
+    replaced with their visible content; spanless links are preserved because
+    they cannot be located authoritatively.
     """
     md = content.markdown or ""
     if not md:
@@ -1021,6 +1023,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
         start = int(paragraph.span.offset)
         stop = start + int(paragraph.span.length)
         replacement = paragraph.content or ""
+        replacement = re.sub(r"<(/?)strong>", r"<\1b>", replacement, flags=re.IGNORECASE)
+        replacement = re.sub(r"<(/?)em>", r"<\1i>", replacement, flags=re.IGNORECASE)
         if replacement:
             replacement = f" {replacement} "
         edits.append((start, stop, replacement))
