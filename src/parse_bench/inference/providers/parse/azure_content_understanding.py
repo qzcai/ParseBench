@@ -90,6 +90,8 @@ _VIRTUAL_PAGE_DIM = 1000.0
 
 _PAGE_FURNITURE_ROLES = frozenset({"pageHeader", "pageFooter", "pageNumber"})
 
+_LAYOUT_STYLE_TAG_RE = re.compile(r"</?(?:strong|em|del|s|strike)\b[^>]*>", re.IGNORECASE)
+
 
 @register_provider("azure_content_understanding")
 class AzureContentUnderstandingProvider(Provider):
@@ -592,6 +594,11 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
                 page_footers[item.page_number].append(item.item.value)
             if paragraph.role == "pageNumber" and item.item.value:
                 page_numbers[item.page_number].append(item.item.value)
+
+    # Strip style wrappers only from layout text, preserving rich page furniture Markdown.
+    for items in page_items.values():
+        for item in items:
+            item.value = _LAYOUT_STYLE_TAG_RE.sub("", item.value)
 
     return [
         ParseLayoutPageIR(
