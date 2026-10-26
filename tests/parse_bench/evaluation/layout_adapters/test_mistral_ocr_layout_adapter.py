@@ -15,7 +15,11 @@ from parse_bench.schemas.pipeline_io import InferenceRequest, InferenceResult
 from parse_bench.schemas.product import ProductType
 
 
-def test_mistral_layout_adapter_preserves_string_labels() -> None:
+@pytest.mark.parametrize(("confidence", "expected_score"), [(0.9, 0.9), (0.0, 0.0), (None, 1.0)])
+@pytest.mark.parametrize("rotation", [None, 30.0])
+def test_mistral_layout_adapter_preserves_string_labels(
+    confidence: float | None, expected_score: float, rotation: float | None
+) -> None:
     timestamp = datetime.now(UTC)
     pipeline_name = "mistral_ocr_4"
     result = InferenceResult(
@@ -46,7 +50,8 @@ def test_mistral_layout_adapter_preserves_string_labels() -> None:
                                     y=0.2,
                                     w=0.3,
                                     h=0.4,
-                                    confidence=0.9,
+                                    confidence=confidence,
+                                    r=rotation,
                                     label="Table",
                                 )
                             ],
@@ -71,3 +76,5 @@ def test_mistral_layout_adapter_preserves_string_labels() -> None:
     assert len(layout.predictions) == 1
     assert layout.predictions[0].label == "Table"
     assert layout.predictions[0].bbox == pytest.approx([10.0, 40.0, 40.0, 120.0])
+    assert layout.predictions[0].score == expected_score
+    assert layout.predictions[0].r == rotation

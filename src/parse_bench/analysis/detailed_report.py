@@ -102,12 +102,7 @@ def _format_evaluation_checks(checks: list[dict[str, Any]]) -> str:
     """Format dataset rules for the existing expected-output panel."""
     count = len(checks)
     noun = "check" if count == 1 else "checks"
-    return (
-        f"Evaluation checks ({count} {noun})\n\n"
-        "```json\n"
-        f"{json.dumps(checks, indent=2, ensure_ascii=False)}\n"
-        "```"
-    )
+    return f"Evaluation checks ({count} {noun})\n\n```json\n{json.dumps(checks, indent=2, ensure_ascii=False)}\n```"
 
 
 def _build_data_blob(
