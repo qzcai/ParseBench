@@ -1227,11 +1227,7 @@ def _parse_with_layout_to_layout_output(
 
                 lookup_key = str_label.lower().replace("-", "_")
                 qwen_enum = QWEN3VL_STR_TO_LABEL.get(lookup_key)
-                output_label = (
-                    str(int(qwen_enum))
-                    if numeric_labels and qwen_enum is not None
-                    else str_label
-                )
+                output_label = str(int(qwen_enum)) if numeric_labels and qwen_enum is not None else str_label
 
                 # Convert normalized [0,1] xywh -> pixel xyxy
                 x1 = seg.x * page_w

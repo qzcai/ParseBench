@@ -42,6 +42,7 @@ def _summary() -> EvaluationSummary:
         ],
     )
 
+
 def _render(tmp_path: Path, **kwargs: object) -> str:
     report_dir = tmp_path / "report"
     report_dir.mkdir(exist_ok=True)
