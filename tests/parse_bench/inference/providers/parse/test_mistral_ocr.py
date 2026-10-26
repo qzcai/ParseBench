@@ -9,8 +9,8 @@ from pypdf import PdfWriter
 
 from parse_bench.inference.providers.base import ProviderConfigError
 from parse_bench.inference.providers.parse.mistral_ocr import (
-    MistralOCRProvider,
     _MISTRAL_OCR_URL,
+    MistralOCRProvider,
 )
 from parse_bench.schemas.pipeline import PipelineSpec
 from parse_bench.schemas.pipeline_io import InferenceRequest
