@@ -128,9 +128,7 @@ class AzureContentUnderstandingProvider(Provider):
             )
 
         self._api_version = self.base_config.get("api_version", _DEFAULT_API_VERSION)
-        self._analyzer_id = self.base_config.get("analyzer_id") or os.getenv(
-            "AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID"
-        )
+        self._analyzer_id = self.base_config.get("analyzer_id") or os.getenv("AZURE_CONTENT_UNDERSTANDING_ANALYZER_ID")
         if not self._analyzer_id:
             raise ProviderConfigError(
                 "Azure Content Understanding analyzer ID is required. "
@@ -179,9 +177,7 @@ class AzureContentUnderstandingProvider(Provider):
                 "throttl",
                 "rate limit",
             )
-            if status_code in transient_status_codes or any(
-                k in message.lower() for k in transient_keywords
-            ):
+            if status_code in transient_status_codes or any(k in message.lower() for k in transient_keywords):
                 raise ProviderTransientError(message) from e
             raise ProviderPermanentError(message) from e
 
@@ -446,9 +442,7 @@ def _build_figure(
         label="Picture",
     )
     content_items = [
-            item
-            for reference in figure.elements or []
-            for item in _build_layout_item(reference, content, page_dims)
+        item for reference in figure.elements or [] for item in _build_layout_item(reference, content, page_dims)
     ]
     caption_items = [
         item
@@ -524,16 +518,9 @@ def _insert_page_furniture(
     content: DocumentContent,
     page_dims: dict[int, tuple[float, float]],
 ) -> None:
-    referenced_paragraphs = {
-        item.element_index
-        for item in items
-        if item.element_type == "paragraphs"
-    }
+    referenced_paragraphs = {item.element_index for item in items if item.element_type == "paragraphs"}
     for index, paragraph in enumerate(content.paragraphs or []):
-        if (
-            paragraph.role not in _PAGE_FURNITURE_ROLES
-            or index in referenced_paragraphs
-        ):
+        if paragraph.role not in _PAGE_FURNITURE_ROLES or index in referenced_paragraphs:
             continue
         position = 0
         while position < len(items):
@@ -571,11 +558,10 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
         if not content.sections:
             logger.warning("CU document content has no sections; using paragraph order")
             layout_items = [
-                _build_paragraph(index, content, page_dims)
-                for index, _ in enumerate(content.paragraphs or [])
+                _build_paragraph(index, content, page_dims) for index, _ in enumerate(content.paragraphs or [])
             ]
         else:
-            # Build the layout items for the top level section (index 0) which contains all the elements in reading order.
+            # Build the top level section (index 0), which contains all elements in reading order.
             layout_items = _build_layout_item("/sections/0", content, page_dims)
 
             # Insert remaining page furniture paragraphs (headers/footers/page numbers)
@@ -683,7 +669,9 @@ def chartjs_to_table_markdown_old(chartjs_str: str) -> str:
             labels = chart["data"].get("labels", [])
 
         # BUBBLE: data = [{x, y, r}, ...]
-        if chart_type == "bubble" or (datasets and isinstance(datasets[0].get("data", [None])[0], dict) and "r" in datasets[0]["data"][0]):
+        if chart_type == "bubble" or (
+            datasets and isinstance(datasets[0].get("data", [None])[0], dict) and "r" in datasets[0]["data"][0]
+        ):
             # Check if any data point has a 'label' field
             has_point_label = any("label" in pt for ds in datasets for pt in ds.get("data", []))
             if has_point_label:
@@ -704,7 +692,12 @@ def chartjs_to_table_markdown_old(chartjs_str: str) -> str:
             return "\n".join([header, separator, *rows])
 
         # SCATTER: data = [{x, y}, ...]
-        if chart_type == "scatter" or (datasets and isinstance(datasets[0].get("data", [None])[0], dict) and "x" in datasets[0]["data"][0] and "y" in datasets[0]["data"][0]):
+        if chart_type == "scatter" or (
+            datasets
+            and isinstance(datasets[0].get("data", [None])[0], dict)
+            and "x" in datasets[0]["data"][0]
+            and "y" in datasets[0]["data"][0]
+        ):
             x_values = sorted({pt["x"] for ds in datasets for pt in ds["data"]})
             header = "| x | " + " | ".join(ds.get("label", "Label") for ds in datasets) + " |"
             separator = "|---|" + "|".join(["---"] * len(datasets)) + "|"
