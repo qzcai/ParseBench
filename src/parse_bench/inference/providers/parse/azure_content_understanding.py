@@ -92,6 +92,11 @@ _PAGE_FURNITURE_ROLES = frozenset({"pageHeader", "pageFooter", "pageNumber"})
 
 _LAYOUT_STYLE_TAG_RE = re.compile(r"</?(?:strong|em|del|s|strike)\b[^>]*>", re.IGNORECASE)
 
+_MULTILINE_BOLD_RE = re.compile(
+    r"(?:\A|(?<=[\r\n]))[ \t]*\*\*(?P<body>(?:(?!\*\*).)+?)\*\*[ \t]*(?=[\r\n]|\Z)",
+    re.DOTALL,
+)
+
 
 @register_provider("azure_content_understanding")
 class AzureContentUnderstandingProvider(Provider):
@@ -977,13 +982,14 @@ def render_content_markdown(content: AnalysisContent) -> str:
     figure region in the markdown (caption + OCR image blob + any raw
     ```` ```chart ```` fence); it is replaced in full by the figure caption
     (kept as table context) followed by the table. Figures whose config cannot
-    be converted are left untouched. Page headers, footers, and numbers are
-    replaced with their typed paragraph content so text metrics can evaluate
-    them instead of losing their payload inside HTML comments. Bold and italic
-    tags in these replacements use ``<b>`` and ``<i>`` so text metrics can ignore
-    the markup without losing the styling. Hyperlinks with structured spans are
-    replaced with their visible content; spanless links are preserved because
-    they cannot be located authoritatively.
+    be converted are left untouched. Page header, footer, and number comments
+    are unwrapped in their Markdown spans, preserving their original text and
+    formatting instead of substituting structured paragraph content. Hyperlinks
+    with structured spans are replaced with their visible content; spanless
+    links are preserved because they cannot be located authoritatively.
+    Non-furniture paragraphs use a local regex to fold standalone multiline
+    bold blocks onto one line by replacing their internal line boundaries with
+    spaces. Raw responses and layout are unchanged.
     """
     md = content.markdown or ""
     if not md:
@@ -1009,18 +1015,31 @@ def render_content_markdown(content: AnalysisContent) -> str:
 
     for paragraph in getattr(content, "paragraphs", None) or []:
         role = paragraph.role
-        if role not in _PAGE_FURNITURE_ROLES:
-            continue
         if paragraph.span is None:
             raise ValueError(f"CU {role} paragraph has no span")
         start = int(paragraph.span.offset)
         stop = start + int(paragraph.span.length)
-        replacement = paragraph.content or ""
-        replacement = re.sub(r"<(/?)strong>", r"<\1b>", replacement, flags=re.IGNORECASE)
-        replacement = re.sub(r"<(/?)em>", r"<\1i>", replacement, flags=re.IGNORECASE)
-        if replacement:
-            replacement = f" {replacement} "
-        edits.append((start, stop, replacement))
+        paragraph_markdown = md[start:stop]
+        if role in _PAGE_FURNITURE_ROLES:
+            replacement = re.sub(
+                r"<!--\s*Page(?:Header|Footer|Number)\s*:\s*(.*?)\s*-->",
+                r"\1",
+                paragraph_markdown,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if replacement:
+                replacement = f" {replacement} "
+            edits.append((start, stop, replacement))
+        else:
+            if re.search(r"[`\\<>]|~~~", paragraph_markdown):
+                continue
+            for match in _MULTILINE_BOLD_RE.finditer(paragraph_markdown):
+                body = match.group("body")
+                if any(not line.strip() for line in re.split(r"\r\n|\r|\n", body)):
+                    continue
+                offset = start + match.start("body")
+                for boundary in re.finditer(r"[ \t]*(?:\r\n|\r|\n)[ \t]*", body):
+                    edits.append((offset + boundary.start(), offset + boundary.end(), " "))
 
     for hyperlink in getattr(content, "hyperlinks", None) or []:
         if hyperlink.span is None:
