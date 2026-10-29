@@ -26,9 +26,11 @@ import json
 import logging
 import os
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,7 @@ from azure.ai.contentunderstanding.models import (
 )
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import AzureError
+from dehyphen import FlairScorer, count_words, format_to_text, text_to_format
 
 from parse_bench.inference.providers.base import (
     Provider,
@@ -96,6 +99,8 @@ _MULTILINE_BOLD_RE = re.compile(
     r"(?:\A|(?<=[\r\n]))[ \t]*\*\*(?P<body>(?:(?!\*\*).)+?)\*\*[ \t]*(?=[\r\n]|\Z)",
     re.DOTALL,
 )
+
+_HYPHEN_BREAK_RE = re.compile(r"[-\u00ad\u2010\u2011\u2013\u2212][ \t]*(?:\r\n|\r|\n)[ \t]*")
 
 
 @register_provider("azure_content_understanding")
@@ -973,6 +978,45 @@ def _apply_markdown_edits(md: str, edits: list[tuple[int, int, str]]) -> str:
     return md
 
 
+@lru_cache(maxsize=1)
+def _dehyphen_scorer() -> FlairScorer:
+    return FlairScorer(lang="multi-v0", fast=True)
+
+
+def _dehyphen_edits(md: str, words: Counter[str]) -> list[tuple[int, int, str]]:
+    if re.search(r"https?://|www\.|mailto:", md, re.IGNORECASE):
+        return []
+    boundaries: list[tuple[int, int]] = []
+    for match in _HYPHEN_BREAK_RE.finditer(md):
+        before = re.search(r"\S+$", md[: match.start()])
+        after = re.match(r"\S+", md[match.end() :])
+        if not before or not after or not before[0][-1].isalpha() or not after[0][0].isalpha():
+            continue
+        if re.search(r"[/@:]", before[0] + after[0]):
+            continue
+        boundaries.append(match.span())
+    if not boundaries:
+        return []
+
+    paragraphs = text_to_format(md)
+    repaired = format_to_text([_dehyphen_scorer().dehyphen_paragraph(p, words=words) for p in paragraphs])
+    tokens = list(re.finditer(r"\S+", md))
+    normalized = " ".join(token[0] for token in tokens)
+    repaired = " ".join(repaired.split())
+    # Map normalized character boundaries back to the untouched Markdown.
+    offsets = [offset for token in tokens for offset in range(token.start(), token.end() + 1)]
+    edits: list[tuple[int, int, str]] = []
+    for tag, start, stop, new_start, new_stop in SequenceMatcher(
+        None, normalized, repaired, autojunk=False
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+        left, right = offsets[start], offsets[stop]
+        if any(begin <= left and right <= end for begin, end in boundaries):
+            edits.append((left, right, repaired[new_start:new_stop]))
+    return edits
+
+
 def render_content_markdown(content: AnalysisContent) -> str:
     """Return content Markdown with links, charts, and page furniture normalized.
 
@@ -989,7 +1033,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
     links are preserved because they cannot be located authoritatively.
     Non-furniture paragraphs use a local regex to fold standalone multiline
     bold blocks onto one line by replacing their internal line boundaries with
-    spaces. Raw responses and layout are unchanged.
+    spaces. Paragraphs repair line-end hyphenation without folding other line
+    boundaries. Raw responses and layout are unchanged.
     """
     md = content.markdown or ""
     if not md:
@@ -1013,18 +1058,26 @@ def render_content_markdown(content: AnalysisContent) -> str:
         replacement = f"{caption}\n\n{table}" if caption else table
         edits.append((start, stop, replacement))
 
-    for paragraph in getattr(content, "paragraphs", None) or []:
+    paragraphs = getattr(content, "paragraphs", None) or []
+    paragraph_spans: list[tuple[int, int]] = []
+    for paragraph in paragraphs:
         role = paragraph.role
         if paragraph.span is None:
             raise ValueError(f"CU {role} paragraph has no span")
         start = int(paragraph.span.offset)
         stop = start + int(paragraph.span.length)
+        paragraph_spans.append((start, stop))
+    words = count_words(block for start, stop in paragraph_spans for block in text_to_format(md[start:stop]))
+
+    for paragraph, (start, stop) in zip(paragraphs, paragraph_spans, strict=True):
+        role = paragraph.role
         paragraph_markdown = md[start:stop]
         if role in _PAGE_FURNITURE_ROLES:
+            paragraph_edits = _dehyphen_edits(paragraph_markdown, words)
             replacement = re.sub(
                 r"<!--\s*Page(?:Header|Footer|Number)\s*:\s*(.*?)\s*-->",
                 r"\1",
-                paragraph_markdown,
+                _apply_markdown_edits(paragraph_markdown, paragraph_edits),
                 flags=re.IGNORECASE | re.DOTALL,
             )
             if replacement:
@@ -1033,13 +1086,17 @@ def render_content_markdown(content: AnalysisContent) -> str:
         else:
             if re.search(r"[`\\<>]|~~~", paragraph_markdown):
                 continue
+            paragraph_edits = _dehyphen_edits(paragraph_markdown, words)
+            edits.extend((start + left, start + right, value) for left, right, value in paragraph_edits)
             for match in _MULTILINE_BOLD_RE.finditer(paragraph_markdown):
                 body = match.group("body")
                 if any(not line.strip() for line in re.split(r"\r\n|\r|\n", body)):
                     continue
                 offset = start + match.start("body")
                 for boundary in re.finditer(r"[ \t]*(?:\r\n|\r|\n)[ \t]*", body):
-                    edits.append((offset + boundary.start(), offset + boundary.end(), " "))
+                    left, right = match.start("body") + boundary.start(), match.start("body") + boundary.end()
+                    if not any(left < end and begin < right for begin, end, _ in paragraph_edits):
+                        edits.append((offset + boundary.start(), offset + boundary.end(), " "))
 
     for hyperlink in getattr(content, "hyperlinks", None) or []:
         if hyperlink.span is None:

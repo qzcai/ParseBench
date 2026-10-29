@@ -789,6 +789,18 @@ wheels = [
 ]
 
 [[package]]
+name = "dehyphen"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8d/64/f1fae9869d5a43f6f42c66fe3b3e11ac62836307f0f4e628fb5474306a43/dehyphen-0.6.0.tar.gz", hash = "sha256:51bf57da77b2cea447d928837df6d401763218993c32b476dad7e39c65c19267", size = 26784, upload-time = "2026-10-27T10:38:07.557Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/3d/53853f580b78bd94cce9a781d3c9c5bb9432a4f40a82a0e2bb406f1bef79/dehyphen-0.6.0-py3-none-any.whl", hash = "sha256:630b528819bf5028b2122620f1eba69118058b76dab9779215a77834f56e4420", size = 25967, upload-time = "2026-10-27T10:38:08.794Z" },
+]
+
+[[package]]
 name = "diskcache"
 version = "5.6.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2696,6 +2708,7 @@ runners = [
     { name = "boto3" },
     { name = "chunkr-ai" },
     { name = "datalab-python-sdk" },
+    { name = "dehyphen" },
     { name = "docling-core" },
     { name = "extend-ai" },
     { name = "google-cloud-documentai" },
@@ -2743,6 +2756,7 @@ requires-dist = [
     { name = "chunkr-ai", marker = "extra == 'runners'", specifier = ">=0.0.43" },
     { name = "datalab-python-sdk", marker = "extra == 'datalab'" },
     { name = "datalab-python-sdk", marker = "extra == 'runners'" },
+    { name = "dehyphen", marker = "extra == 'runners'", specifier = "==0.6.0" },
     { name = "docling-core", marker = "extra == 'docling'", specifier = ">=2.71.0" },
     { name = "docling-core", marker = "extra == 'runners'", specifier = ">=2.71.0" },
     { name = "extend-ai", marker = "extra == 'extend'", specifier = ">=1.16.0" },
