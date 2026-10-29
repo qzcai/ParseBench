@@ -983,8 +983,9 @@ def render_content_markdown(content: AnalysisContent) -> str:
     ```` ```chart ```` fence); it is replaced in full by the figure caption
     (kept as table context) followed by the table. Figures whose config cannot
     be converted are left untouched. Page header, footer, and number comments
-    are unwrapped in their Markdown spans, preserving their original text and
-    formatting instead of substituting structured paragraph content. Hyperlinks
+    are unwrapped in their Markdown spans, accepting both ``PageHeader="..."``
+    and legacy ``PageHeader: ...`` syntax while preserving their original text
+    and formatting instead of substituting structured paragraph content. Hyperlinks
     with structured spans are replaced with their visible content; spanless
     links are preserved because they cannot be located authoritatively.
     Non-furniture paragraphs use a local regex to fold standalone multiline
@@ -1022,8 +1023,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
         paragraph_markdown = md[start:stop]
         if role in _PAGE_FURNITURE_ROLES:
             replacement = re.sub(
-                r"<!--\s*Page(?:Header|Footer|Number)\s*:\s*(.*?)\s*-->",
-                r"\1",
+                r'<!--\s*Page(?:Header|Footer|Number)\s*(?::\s*(.*?)|=\s*"(.*?)")\s*-->',
+                lambda match: match.group(1) if match.group(1) is not None else match.group(2),
                 paragraph_markdown,
                 flags=re.IGNORECASE | re.DOTALL,
             )
