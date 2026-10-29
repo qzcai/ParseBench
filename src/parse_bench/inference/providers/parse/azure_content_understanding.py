@@ -102,6 +102,9 @@ _MULTILINE_BOLD_RE = re.compile(
 
 _HYPHEN_BREAK_RE = re.compile(r"[-\u00ad\u2010\u2011\u2013\u2212][ \t]*(?:\r\n|\r|\n)[ \t]*")
 
+_HAN_KANA_CHAR = r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af\u3040-\u30ff]"
+_CJK_BREAK_RE = re.compile(rf"(?<={_HAN_KANA_CHAR})[ \t]*(?:\r\n|\r|\n)[ \t]*(?={_HAN_KANA_CHAR})")
+
 
 @register_provider("azure_content_understanding")
 class AzureContentUnderstandingProvider(Provider):
@@ -984,8 +987,9 @@ def _dehyphen_scorer() -> FlairScorer:
 
 
 def _dehyphen_edits(md: str, words: Counter[str]) -> list[tuple[int, int, str]]:
+    edits: list[tuple[int, int, str]] = [(match.start(), match.end(), "") for match in _CJK_BREAK_RE.finditer(md)]
     if re.search(r"https?://|www\.|mailto:", md, re.IGNORECASE):
-        return []
+        return edits
     boundaries: list[tuple[int, int]] = []
     for match in _HYPHEN_BREAK_RE.finditer(md):
         before = re.search(r"\S+$", md[: match.start()])
@@ -996,7 +1000,7 @@ def _dehyphen_edits(md: str, words: Counter[str]) -> list[tuple[int, int, str]]:
             continue
         boundaries.append(match.span())
     if not boundaries:
-        return []
+        return edits
 
     paragraphs = text_to_format(md)
     repaired = format_to_text([_dehyphen_scorer().dehyphen_paragraph(p, words=words) for p in paragraphs])
@@ -1005,7 +1009,6 @@ def _dehyphen_edits(md: str, words: Counter[str]) -> list[tuple[int, int, str]]:
     repaired = " ".join(repaired.split())
     # Map normalized character boundaries back to the untouched Markdown.
     offsets = [offset for token in tokens for offset in range(token.start(), token.end() + 1)]
-    edits: list[tuple[int, int, str]] = []
     for tag, start, stop, new_start, new_stop in SequenceMatcher(
         None, normalized, repaired, autojunk=False
     ).get_opcodes():
@@ -1033,8 +1036,9 @@ def render_content_markdown(content: AnalysisContent) -> str:
     links are preserved because they cannot be located authoritatively.
     Non-furniture paragraphs use a local regex to fold standalone multiline
     bold blocks onto one line by replacing their internal line boundaries with
-    spaces. Paragraphs repair line-end hyphenation without folding other line
-    boundaries. Raw responses and layout are unchanged.
+    spaces. Paragraphs repair line-end hyphenation and join Han/kana across
+    single line boundaries, preserving other line breaks. Raw responses and
+    layout are unchanged.
     """
     md = content.markdown or ""
     if not md:
