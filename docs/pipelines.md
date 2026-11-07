@@ -157,6 +157,43 @@ tables), reading order, and layout/figure bounding boxes.
 | **`azure_cu_layout`** | Fixed alias for the `prebuilt-layout` analyzer. No LLM deployment required. | `AZURE_CONTENT_UNDERSTANDING_KEY`, `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` |
 | **`azure_cu_search`** | Fixed alias for the `prebuilt-documentSearch` analyzer, including figure/chart understanding. | `AZURE_CONTENT_UNDERSTANDING_KEY`, `AZURE_CONTENT_UNDERSTANDING_ENDPOINT` |
 
+### LLMParser
+
+| Pipeline | Description | Env Vars |
+|---|---|---|
+| `llmparser_terra_low` | DI-compatible LLMParser, Terra/Low with Canonical17 visual regions | `LLMPARSER_ENDPOINT`, `LLMPARSER_API_KEY` |
+
+Install with `pip install "parse-bench[llmparser]"`, then run:
+
+```bash
+LLMPARSER_OPERATION_DIR=./output/llmparser_terra_low/_llmparser_operations \
+  parse-bench run llmparser_terra_low --output_dir=./output --test --max_concurrent=1
+```
+
+The endpoint must be an HTTPS origin; HTTP is allowed only for loopback testing.
+The provider submits each input once and polls the authenticated, same-origin
+operation URL. Accepted or uncertain submissions are never automatically replayed.
+Live mode requires a private `LLMPARSER_OPERATION_DIR` for durable request
+claims and operation URLs. Across process restarts, matching requests resume
+GET polling instead of POSTing again. An ambiguous submission claim without a
+polling URL blocks resubmission until reconciled. No key is written to these
+checkpoints. Polling failures also retain the operation URL in the private
+error debug payload.
+
+For offline scoring, set `LLMPARSER_PRECOMPUTED_DIR` to a response directory
+containing `manifest.json` with `schemaVersion: 1` and `entries` carrying
+`inputPath` and the SHA-256 of the exact submitted bytes. Each response is at
+`<inputPath>.json` beside its manifest and contains the DI `analyzeResult` or
+a successful DI operation envelope, including `_llmparser` metadata.
+Offline mode requires no API key and never falls back to the live endpoint.
+Model and reasoning provenance must match the selected pipeline.
+
+Markdown is preserved unchanged. Page content follows the DI page spans;
+normalized xywh Canonical17 regions are projected on a unit-square canvas.
+Missing regions, invalid boxes, unknown labels, failed operations and absent
+input hashes are explicit errors, not empty successful layout outputs.
+Replay latency measures local replay, not original model inference.
+
 ### AWS Textract
 
 | Pipeline | Description | Env Vars |

@@ -2045,6 +2045,26 @@ class DatabricksAiParseLayoutAdapter(LayoutAdapter):
         )
 
 
+@register_layout_adapter("llmparser", priority=90)
+class LLMParserLayoutAdapter(DatabricksAiParseLayoutAdapter):
+    """Reuse the native Canonical17 geometry projection without relabeling the provider."""
+
+    @classmethod
+    def matches(cls, inference_result: InferenceResult) -> bool:
+        raw = inference_result.raw_output
+        config = raw.get("_config", {}) if isinstance(raw, dict) else {}
+        return isinstance(config, dict) and config.get("provider") == "llmparser"
+
+    def to_layout_output(
+        self,
+        inference_result: InferenceResult,
+        *,
+        page_filter: int | None = None,
+    ) -> LayoutOutput:
+        output = super().to_layout_output(inference_result, page_filter=page_filter)
+        return output.model_copy(update={"model": LayoutDetectionModel.LLMPARSER_LAYOUT})
+
+
 @register_layout_adapter("anyformat", priority=90)
 class AnyformatLayoutAdapter(LayoutAdapter):
     """Adapter that extracts LayoutOutput from anyformat ParseOutput.layout_pages

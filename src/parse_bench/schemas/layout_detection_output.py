@@ -322,6 +322,7 @@ class LayoutDetectionModel(StrEnum):
     OVISOCR3_LAYOUT = "ovisocr3_layout"
     MISTRAL_OCR_LAYOUT = "mistral_ocr_layout"
     DATABRICKS_LAYOUT = "databricks_layout"
+    LLMPARSER_LAYOUT = "llmparser_layout"
     INFINITY_PARSER2_LAYOUT = "infinity_parser2_layout"
     OI_PARSER_LAYOUT = "oi_parser_layout"
     UPSTAGE_LAYOUT = "upstage_layout"

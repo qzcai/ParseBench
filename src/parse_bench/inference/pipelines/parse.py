@@ -395,6 +395,15 @@ def register_parse_pipelines(register_fn) -> None:  # type: ignore[no-untyped-de
         )
     )
 
+    register_fn(
+        PipelineSpec(
+            pipeline_name="llmparser_terra_low",
+            provider_name="llmparser",
+            product_type=ProductType.PARSE,
+            config={"model": "gpt-6.1-terra", "reasoning_effort": "low"},
+        )
+    )
+
     # ===========================
     # Azure Document Intelligence
     # ===========================

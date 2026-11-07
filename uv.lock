@@ -2668,6 +2668,9 @@ llamaparse = [
     { name = "httpx" },
     { name = "llama-cloud" },
 ]
+llmparser = [
+    { name = "httpx" },
+]
 local = [
     { name = "pdf2image" },
     { name = "pillow" },
@@ -2756,6 +2759,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'anyformat'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'docling'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'llamaparse'", specifier = ">=0.28.0" },
+    { name = "httpx", marker = "extra == 'llmparser'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'runners'", specifier = ">=0.28.0" },
     { name = "httpx", marker = "extra == 'upstage'", specifier = ">=0.28.0" },
     { name = "huggingface-hub", specifier = ">=0.20.0" },
@@ -2815,7 +2819,7 @@ requires-dist = [
     { name = "unstructured-client", marker = "extra == 'unstructured'", specifier = ">=0.26.0" },
     { name = "warp-ingest", extras = ["ocr"], marker = "extra == 'runners'", specifier = ">=2.0.1" },
 ]
-provides-extras = ["anthropic", "anyformat", "aws", "azure", "chunkr", "datalab", "dev", "docling", "extend", "fast", "google", "landingai", "liteparse", "llamaparse", "local", "openai", "pymupdf4llm", "reducto", "runners", "unstructured", "upstage"]
+provides-extras = ["anthropic", "anyformat", "aws", "azure", "chunkr", "datalab", "dev", "docling", "extend", "fast", "google", "landingai", "liteparse", "llamaparse", "llmparser", "local", "openai", "pymupdf4llm", "reducto", "runners", "unstructured", "upstage"]
 
 [[package]]
 name = "partial-json-parser"

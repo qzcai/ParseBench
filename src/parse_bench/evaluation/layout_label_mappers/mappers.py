@@ -59,6 +59,11 @@ class CanonicalPassthroughMapper(LayoutLabelMapper):
             raise UnknownRawLayoutLabelError(f"Unknown raw layout label '{label}' and no mapper was resolved") from exc
 
 
+@register_layout_label_mapper("llmparser", "model:llmparser_layout", priority=95)
+class LLMParserLabelMapper(CanonicalPassthroughMapper):
+    """Preserve the Canonical17 labels predicted by LLMParser."""
+
+
 @register_layout_label_mapper(
     "hunyuanocr",
     "model:hunyuanocr_layout",
