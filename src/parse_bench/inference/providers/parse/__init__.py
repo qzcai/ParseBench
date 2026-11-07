@@ -44,6 +44,7 @@ _PROVIDER_MODULES = [
     "pymupdf4llm",
     "rakedoc_nano",
     "llamaparse",
+    "llmparser",
     "llamaparse_v2_normalization",
     "minicpm_ocr",
     "mineru25",
