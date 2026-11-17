@@ -121,6 +121,7 @@ class EvaluationCLI:
             export_rule_csv=export_rule_csv,
             export_markdown=export_markdown,
             export_html=export_html,
+            export_detailed_html=export_detailed_html,
             verbose=verbose,
             multi_task=multi_task,
             max_workers=max_workers,
@@ -154,6 +155,7 @@ class EvaluationCLI:
         verified_only: bool,
         next: bool | str | list[str] | tuple[str, ...] | dict[str, Any],
         next_only: bool = False,
+        export_detailed_html: bool = True,
     ) -> tuple[int, EvaluationSummary | None]:
         """Body of ``run``: returns the exit code and, on success, the evaluation summary."""
         try:
@@ -175,6 +177,7 @@ class EvaluationCLI:
                         "export_rule_csv": export_rule_csv,
                         "export_markdown": export_markdown,
                         "export_html": export_html,
+                        "export_detailed_html": export_detailed_html,
                         "verbose": verbose,
                         "multi_task": multi_task,
                         "max_workers": max_workers,
