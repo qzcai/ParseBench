@@ -92,6 +92,7 @@ _MULTILINE_BOLD_RE = re.compile(
     r"(?:\A|(?<=[\r\n]))[ \t]*\*\*(?P<body>(?:(?!\*\*).)+?)\*\*[ \t]*(?=[\r\n]|\Z)",
     re.DOTALL,
 )
+_ESCAPED_LIST_MARKER_RE = re.compile(r"(?:\A|(?<=[\r\n]))[ \t]*(?:>[ \t]*)*\d+(?P<escape>\\)\.(?=[ \t])")
 
 
 @register_provider("azure_content_understanding")
@@ -616,6 +617,25 @@ def _apply_markdown_edits(md: str, edits: list[tuple[int, int, str]]) -> str:
     return md
 
 
+def _multiline_bold_edits(paragraph_markdown: str, start: int, edits: list[tuple[int, int, str]]) -> None:
+    if re.search(r"[`\\<>]|~~~", paragraph_markdown):
+        return
+    for match in _MULTILINE_BOLD_RE.finditer(paragraph_markdown):
+        body = match.group("body")
+        if any(not line.strip() for line in re.split(r"\r\n|\r|\n", body)):
+            continue
+        offset = start + match.start("body")
+        for boundary in re.finditer(r"[ \t]*(?:\r\n|\r|\n)[ \t]*", body):
+            edits.append((offset + boundary.start(), offset + boundary.end(), " "))
+
+
+def _ordered_list_marker_edits(paragraph_markdown: str, start: int, edits: list[tuple[int, int, str]]) -> None:
+    """Unescape line-leading ordered-list markers within a paragraph."""
+    for match in _ESCAPED_LIST_MARKER_RE.finditer(paragraph_markdown):
+        escape = start + match.start("escape")
+        edits.append((escape, escape + 1, ""))
+
+
 def render_content_markdown(content: AnalysisContent) -> str:
     """Return content Markdown with links and page furniture normalized.
 
@@ -627,7 +647,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
     links are preserved because they cannot be located authoritatively.
     Non-furniture paragraphs use a local regex to fold standalone multiline
     bold blocks onto one line by replacing their internal line boundaries with
-    spaces. Raw responses and layout are unchanged.
+    spaces. Escaped ordered-list markers in Markdown paragraphs are unescaped.
+    Raw responses and layout are unchanged.
     """
     md = content.markdown or ""
     if not md:
@@ -652,15 +673,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
                 replacement = f" {replacement} "
             edits.append((start, stop, replacement))
         else:
-            if re.search(r"[`\\<>]|~~~", paragraph_markdown):
-                continue
-            for match in _MULTILINE_BOLD_RE.finditer(paragraph_markdown):
-                body = match.group("body")
-                if any(not line.strip() for line in re.split(r"\r\n|\r|\n", body)):
-                    continue
-                offset = start + match.start("body")
-                for boundary in re.finditer(r"[ \t]*(?:\r\n|\r|\n)[ \t]*", body):
-                    edits.append((offset + boundary.start(), offset + boundary.end(), " "))
+            _multiline_bold_edits(paragraph_markdown, start, edits)
+            _ordered_list_marker_edits(paragraph_markdown, start, edits)
 
     for hyperlink in getattr(content, "hyperlinks", None) or []:
         if hyperlink.span is None:
