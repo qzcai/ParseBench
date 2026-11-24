@@ -23,6 +23,7 @@ Auth/config (env var or ``base_config`` key):
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 from collections import defaultdict
@@ -311,6 +312,27 @@ def _to_normalized_bbox(
     )
 
 
+def _normalized_vertical_bounds(
+    source: str | None,
+    page_dims: dict[int, tuple[float, float]],
+    page_angles: dict[int, float],
+) -> tuple[int, float, float]:
+    page_number, x, y, width, height = _to_normalized_bbox(source, page_dims)
+    angle = math.radians(page_angles.get(page_number, 0.0))
+    sin_angle, cos_angle = math.sin(angle), math.cos(angle)
+    # Project each centered corner onto the reading-direction vertical axis.
+    vertical_positions = [
+        0.5 - sin_angle * (point_x - 0.5) + cos_angle * (point_y - 0.5)
+        for point_x, point_y in (
+            (x, y),
+            (x + width, y),
+            (x, y + height),
+            (x + width, y + height),
+        )
+    ]
+    return page_number, min(vertical_positions), max(vertical_positions)
+
+
 def _parse_element_reference(reference: str) -> tuple[str, int]:
     """Parse ``/<element-type>/<index>`` into its typed components."""
     if not reference.startswith("/"):
@@ -561,6 +583,21 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
             )
             for page in content.pages or []
         }
+        page_angles = {int(page.page_number or 1): float(page.angle or 0.0) for page in content.pages or []}
+        page_content_bounds: dict[int, tuple[float, float]] = {}
+        for paragraph in content.paragraphs or []:
+            if paragraph.role in _PAGE_FURNITURE_ROLES:
+                continue
+            page_number, top, bottom = _normalized_vertical_bounds(
+                paragraph.source,
+                page_dims,
+                page_angles,
+            )
+            if page_number in page_content_bounds:
+                content_top, content_bottom = page_content_bounds[page_number]
+                page_content_bounds[page_number] = min(content_top, top), max(content_bottom, bottom)
+            else:
+                page_content_bounds[page_number] = top, bottom
         paragraph_labels: dict[int, str] = {}
         # Preserve roles explicitly conveyed by figure/table associations.
         elements: list[DocumentFigure | DocumentTable] = [*(content.figures or []), *(content.tables or [])]
@@ -602,6 +639,17 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
                 for segment in item.item.layout_segments:
                     segment.label = paragraph_labels[item.element_index]
             paragraph = list(content.paragraphs or [])[item.element_index]
+            if paragraph.role == "pageNumber":
+                page_number, top, bottom = _normalized_vertical_bounds(
+                    paragraph.source,
+                    page_dims,
+                    page_angles,
+                )
+                if page_number in page_content_bounds:
+                    content_top, content_bottom = page_content_bounds[page_number]
+                    label = "Page-header" if (top + bottom) / 2 < (content_top + content_bottom) / 2 else "Page-footer"
+                    for segment in item.item.layout_segments:
+                        segment.label = label
             if item.item.bbox.label == "Page-header" and item.item.value:
                 page_headers[item.page_number].append(item.item.value)
             elif item.item.bbox.label == "Page-footer" and item.item.value:
