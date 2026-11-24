@@ -36,6 +36,7 @@ from azure.ai.contentunderstanding.models import (
     AnalysisContent,
     AnalysisResult,
     DocumentContent,
+    DocumentParagraph,
 )
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import AzureError
@@ -93,6 +94,7 @@ _MULTILINE_BOLD_RE = re.compile(
     re.DOTALL,
 )
 _ESCAPED_LIST_MARKER_RE = re.compile(r"(?:\A|(?<=[\r\n]))[ \t]*(?:>[ \t]*)*\d+(?P<escape>\\)\.(?=[ \t])")
+_SUPERSCRIPT_MARKDOWN_RE = re.compile(r"<\s*(?:sup|sub)\b", re.IGNORECASE)
 
 
 @register_provider("azure_content_understanding")
@@ -353,6 +355,7 @@ def _build_paragraph(
         page_number=page_number,
         item=LayoutItemIR(
             type="text",
+            md=_paragraph_markdown(content, paragraph),
             value=paragraph.content or "",
             bbox=segment,
             layout_segments=[segment],
@@ -636,6 +639,49 @@ def _ordered_list_marker_edits(paragraph_markdown: str, start: int, edits: list[
         edits.append((escape, escape + 1, ""))
 
 
+def _paragraph_markdown_edits(
+    paragraph_markdown: str,
+    role: str | None,
+    start: int,
+) -> list[tuple[int, int, str]]:
+    edits: list[tuple[int, int, str]] = []
+    if role in _PAGE_FURNITURE_ROLES:
+        replacement = re.sub(
+            r"<!--\s*Page(?:Header|Footer|Number)\s*:\s*(.*?)\s*-->",
+            r"\1",
+            paragraph_markdown,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if replacement:
+            replacement = f" {replacement} "
+        edits.append((start, start + len(paragraph_markdown), replacement))
+    else:
+        _multiline_bold_edits(paragraph_markdown, start, edits)
+        _ordered_list_marker_edits(paragraph_markdown, start, edits)
+    return edits
+
+
+def _paragraph_markdown(
+    content: DocumentContent,
+    paragraph: DocumentParagraph,
+) -> str:
+    span = paragraph.span
+    markdown = content.markdown or ""
+    if span is None or not markdown:
+        return ""
+
+    offset = int(span.offset)
+    length = int(span.length)
+    if offset < 0 or length < 0 or offset + length > len(markdown):
+        raise ValueError(f"Invalid CU markdown span: offset={offset}, length={length}")
+    paragraph_markdown = markdown[offset : offset + length]
+    if not _SUPERSCRIPT_MARKDOWN_RE.search(paragraph_markdown):
+        return ""
+
+    edits = _paragraph_markdown_edits(paragraph_markdown, paragraph.role, 0)
+    return _apply_markdown_edits(paragraph_markdown, edits)
+
+
 def render_content_markdown(content: AnalysisContent) -> str:
     """Return content Markdown with links and page furniture normalized.
 
@@ -660,21 +706,8 @@ def render_content_markdown(content: AnalysisContent) -> str:
         if paragraph.span is None:
             raise ValueError(f"CU {role} paragraph has no span")
         start = int(paragraph.span.offset)
-        stop = start + int(paragraph.span.length)
-        paragraph_markdown = md[start:stop]
-        if role in _PAGE_FURNITURE_ROLES:
-            replacement = re.sub(
-                r"<!--\s*Page(?:Header|Footer|Number)\s*:\s*(.*?)\s*-->",
-                r"\1",
-                paragraph_markdown,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-            if replacement:
-                replacement = f" {replacement} "
-            edits.append((start, stop, replacement))
-        else:
-            _multiline_bold_edits(paragraph_markdown, start, edits)
-            _ordered_list_marker_edits(paragraph_markdown, start, edits)
+        paragraph_markdown = md[start : start + int(paragraph.span.length)]
+        edits.extend(_paragraph_markdown_edits(paragraph_markdown, role, start))
 
     for hyperlink in getattr(content, "hyperlinks", None) or []:
         if hyperlink.span is None:

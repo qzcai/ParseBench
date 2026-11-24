@@ -2610,7 +2610,7 @@ class AzureCULayoutAdapter(LayoutAdapter):
                     x2 = (seg.x + seg.w) * page_w
                     y2 = (seg.y + seg.h) * page_h
 
-                    content = _build_azure_cu_content(label, item.value)
+                    content = _build_azure_cu_content(label, item.md or item.value)
 
                     predictions.append(
                         LayoutPrediction(
