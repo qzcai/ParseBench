@@ -36,7 +36,9 @@ from azure.ai.contentunderstanding.models import (
     AnalysisContent,
     AnalysisResult,
     DocumentContent,
+    DocumentFigure,
     DocumentParagraph,
+    DocumentTable,
 )
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import AzureError
@@ -559,6 +561,19 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
             )
             for page in content.pages or []
         }
+        paragraph_labels: dict[int, str] = {}
+        # Preserve roles explicitly conveyed by figure/table associations.
+        elements: list[DocumentFigure | DocumentTable] = [*(content.figures or []), *(content.tables or [])]
+        for element in elements:
+            for label, associations in (
+                ("Caption", [element.caption] if element.caption else []),
+                ("Footnote", element.footnotes or []),
+            ):
+                for association in associations:
+                    for reference in association.elements or []:
+                        element_type, index = _parse_element_reference(reference)
+                        if element_type == "paragraphs":
+                            paragraph_labels.setdefault(index, label)
 
         if not content.sections:
             logger.warning("CU document content has no sections; using paragraph order")
@@ -576,12 +591,16 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
             page_items[item.page_number].append(item.item)
             if item.element_type != "paragraphs":
                 continue
+            # CU emits barcodes as header paragraphs; treat them as non-text figures.
             if item.item.value.strip() == ":barcode:":
                 item.item.type = "Picture"
                 item.item.value = ""
                 item.item.md = ""
                 for segment in item.item.layout_segments:
                     segment.label = "Picture"
+            elif item.element_index in paragraph_labels:
+                for segment in item.item.layout_segments:
+                    segment.label = paragraph_labels[item.element_index]
             paragraph = list(content.paragraphs or [])[item.element_index]
             if item.item.bbox.label == "Page-header" and item.item.value:
                 page_headers[item.page_number].append(item.item.value)
