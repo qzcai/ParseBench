@@ -576,6 +576,12 @@ def _build_layout_pages(contents: list[AnalysisContent]) -> list[ParseLayoutPage
             page_items[item.page_number].append(item.item)
             if item.element_type != "paragraphs":
                 continue
+            if item.item.value.strip() == ":barcode:":
+                item.item.type = "Picture"
+                item.item.value = ""
+                item.item.md = ""
+                for segment in item.item.layout_segments:
+                    segment.label = "Picture"
             paragraph = list(content.paragraphs or [])[item.element_index]
             if item.item.bbox.label == "Page-header" and item.item.value:
                 page_headers[item.page_number].append(item.item.value)
